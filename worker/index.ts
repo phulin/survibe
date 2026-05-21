@@ -93,7 +93,11 @@ const revealVotes = async (env: Env, gameId: string) => {
   if (eliminatedId === refreshed.humanPlayerId || shouldEndGame(refreshed.players)) {
     await updateGameStatus(env.DB, game.id, "complete");
   } else {
-    await updateGameStatus(env.DB, game.id, "camp", game.round + 1);
+    const nextRound = game.round + 1;
+    await updateGameStatus(env.DB, game.id, "camp", nextRound);
+    await addEvent(env.DB, game.id, nextRound, "round_started", {
+      contestants: activeContestants(refreshed.players).map((player) => player.name),
+    });
   }
 
   return json(await getGame(env.DB, game.id));
@@ -240,7 +244,7 @@ export default {
         const target = assertActiveTarget(game, body.targetId);
 
         await updateGameStatus(env.DB, game.id, "voting");
-        await addVote(env.DB, game.id, game.round, game.humanPlayerId, target.id, `The human player voted for ${target.name}.`, 100);
+        await addVote(env.DB, game.id, game.round, game.humanPlayerId, target.id, `Voted for ${target.name}.`, 100);
         await castAiVotes(env, game.id);
         await addEvent(env.DB, game.id, game.round, "votes_cast", { round: game.round });
 

@@ -234,7 +234,9 @@ The prompt should tell the model:
 - Keep responses concise enough for a chat UI.
 - Do not claim to perform actions outside the game interface.
 
-Every AI request should include the entire game history available in D1, ordered from oldest to newest. This includes all private conversations, Tribal Council messages, votes, eliminations, and game events. Do not summarize, drop, or rewrite earlier turns for the MVP; context exhaustion will be handled later if it becomes a real blocker.
+Every AI request should include the entire game history available in D1 as an actual ordered conversation, not as a rewritten summary block. Server events and other players' observed actions are appended as `user` turns; the current AI player's prior messages are appended as `assistant` turns. This includes all private conversations, Tribal Council messages, votes, eliminations, and game events. Do not summarize, drop, or rewrite earlier turns for the MVP; context exhaustion will be handled later if it becomes a real blocker.
+
+Model-visible contestant dossiers should not identify which contestant is controlled by a human. The human player receives a normal name, archetype, biography, and playstyle just like AI contestants.
 
 ### Jeff Probst Prompt
 

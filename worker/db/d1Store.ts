@@ -76,6 +76,18 @@ const parseJson = <T>(value: string | null, fallback: T): T => {
 
 const nowIso = () => new Date().toISOString();
 
+const humanContestantProfile = (name: string): AiProfile => ({
+  archetype: "The Connector",
+  biography: `${name} presents as a socially fluent strategist who prioritizes early bonds and flexible voting options.`,
+  speechStyle: "Warm, curious, and relationship-focused.",
+  strategicStyle: "Builds trust early, asks direct questions, and looks for stable numbers before Tribal Council.",
+  riskTolerance: "medium",
+  loyalty: 64,
+  deception: 52,
+  threatSensitivity: 66,
+  memorySummary: `${name} is trying to establish enough trust to survive the first votes without appearing too threatening.`,
+});
+
 const toPlayer = (row: PlayerRow): PlayerSummary => ({
   id: row.id,
   kind: row.kind,
@@ -122,6 +134,7 @@ export const createGame = async (db: D1Database, humanName: string, aiCount: num
   const hostId = crypto.randomUUID();
   const createdAt = nowIso();
   const cast = selectCast(aiCount);
+  const playerName = humanName || "Alex Vale";
 
   await db
     .prepare("INSERT INTO games (id, status, round, human_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
@@ -130,9 +143,20 @@ export const createGame = async (db: D1Database, humanName: string, aiCount: num
 
   await db
     .prepare(
-      "INSERT INTO players (id, game_id, kind, name, status, public_facts_json, private_notes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO players (id, game_id, kind, name, status, profile_json, public_facts_json, private_notes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(humanId, gameId, "human", humanName || "Castaway", "active", "[]", "[]", createdAt, createdAt)
+    .bind(
+      humanId,
+      gameId,
+      "human",
+      playerName,
+      "active",
+      JSON.stringify(humanContestantProfile(playerName)),
+      JSON.stringify(["The Connector"]),
+      "[]",
+      createdAt,
+      createdAt,
+    )
     .run();
 
   await db
@@ -163,7 +187,7 @@ export const createGame = async (db: D1Database, humanName: string, aiCount: num
   }
 
   await addEvent(db, gameId, 1, "game_started", {
-    humanName: humanName || "Castaway",
+    contestants: [playerName, ...cast.map((profile) => profile.name)],
     aiCount: cast.length,
   });
 

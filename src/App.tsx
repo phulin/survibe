@@ -37,7 +37,7 @@ const setGamePath = (gameId: string | null) => {
 };
 
 const Setup = ({ onCreate, busy }: { onCreate: (name: string, aiCount: number) => void; busy: boolean }) => {
-  const [name, setName] = useState("Player");
+  const [name, setName] = useState("Alex Vale");
   const [aiCount, setAiCount] = useState(6);
 
   const submit = (event: FormEvent) => {
@@ -100,7 +100,7 @@ const Roster = ({ game, selectedId, onSelect }: { game: GameView; selectedId: st
             <span className="avatar">{player.kind === "human" ? "H" : player.name.slice(0, 1)}</span>
             <span>
               <strong>{player.name}</strong>
-              <small>{player.profile?.archetype ?? "Human player"}</small>
+              <small>{player.profile?.archetype ?? "Contestant"}</small>
             </span>
             {player.status === "eliminated" ? <Skull size={16} /> : null}
           </button>
