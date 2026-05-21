@@ -141,6 +141,7 @@ textarea {
 
 .rail,
 .panel {
+  position: relative;
   border-radius: 8px;
   min-height: 0;
 }
@@ -149,6 +150,16 @@ textarea {
   min-height: 0;
   overflow: auto;
   padding: 14px;
+}
+
+.roster {
+  z-index: 30;
+  overflow: visible;
+}
+
+.chat-panel,
+.council {
+  z-index: 1;
 }
 
 .rail-title,
@@ -262,6 +273,7 @@ textarea {
 .player:hover .player-card,
 .player:focus-visible .player-card {
   opacity: 1;
+  pointer-events: auto;
   transform: translate(0, -50%);
   visibility: visible;
 }
