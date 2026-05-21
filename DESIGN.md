@@ -15,6 +15,8 @@ The MVP covers only post-merge Survivor-style rounds. That keeps the game focuse
 ### In Scope
 
 - A Vite, TypeScript, React web interface.
+- A Cloudflare Worker backend for API routes, OpenAI calls, game state transitions, and persistence access.
+- Cloudflare D1 as the primary database.
 - One human player and a configurable cast of AI players.
 - Persistent AI player names, identities, goals, alliances, and memories.
 - One-on-one private chats between the human and each AI player.
@@ -23,13 +25,12 @@ The MVP covers only post-merge Survivor-style rounds. That keeps the game focuse
   1. Camp phase begins.
   2. Human chats privately with AI players.
   3. AI players privately strategize.
-  4. Immunity is assigned or simulated.
-  5. Jeff Probst runs Tribal Council.
-  6. Human and AI players answer Tribal Council questions.
-  7. Votes are cast.
-  8. Votes are revealed.
-  9. Eliminated player exits.
-  10. Game state persists and the next round starts.
+  4. Jeff Probst runs Tribal Council.
+  5. Human and AI players answer Tribal Council questions.
+  6. Votes are cast.
+  7. Votes are revealed.
+  8. Eliminated player exits.
+  9. Game state persists and the next round starts.
 - A final result screen showing placement and high-level benchmark metrics.
 - Server-side OpenAI API usage.
 
@@ -40,6 +41,7 @@ The MVP covers only post-merge Survivor-style rounds. That keeps the game focuse
 - Live multiplayer humans.
 - Complex physical challenges.
 - Idols, advantages, Shot in the Dark, fire-making, jury questioning, and final jury vote.
+- Immunity status.
 - Full production-grade anti-cheat or benchmark validation.
 - Voice, video, or realtime audio.
 
@@ -52,11 +54,10 @@ These can be added later after the core social loop is playable and measurable.
 - **Game Setup**
   - Human enters display name.
   - Select number of AI opponents.
-  - Select difficulty or AI strategic intensity.
   - Start a new post-merge game.
 
 - **Camp**
-  - Shows remaining players, immunity status, relationship hints, and round number.
+  - Shows remaining players, relationship hints, and round number.
   - Human can open private one-on-one chats with each remaining AI.
   - Human sees their private notes and known voting history.
   - A round action advances to Tribal Council when the player is ready.
@@ -76,7 +77,7 @@ These can be added later after the core social loop is playable and measurable.
 - **Voting**
   - Human selects a target.
   - AI players cast votes using structured decision outputs.
-  - Immune players cannot be voted out.
+  - Any active non-host player can be targeted in the MVP.
 
 - **Vote Reveal**
   - Votes are revealed one by one.
@@ -97,8 +98,7 @@ flowchart TD
   A["New post-merge game"] --> B["Camp phase"]
   B --> C["Human private chats"]
   C --> D["AI private strategy simulation"]
-  D --> E["Assign or simulate immunity"]
-  E --> F["Tribal Council questions"]
+  D --> F["Tribal Council questions"]
   F --> G["Voting"]
   G --> H["Vote reveal"]
   H --> I{"Human eliminated?"}
@@ -136,7 +136,6 @@ type Player = {
   name: string;
   status: "active" | "eliminated";
   placement?: number;
-  immune: boolean;
   profile?: AiProfile;
   publicFacts: string[];
   privateNotes: string[];
@@ -187,7 +186,7 @@ type Vote = {
 
 ## 6. AI Cast
 
-The first build should seed a fixed cast so benchmark runs are comparable. Names should be stable across games unless the user explicitly randomizes the cast.
+The first build should seed a fixed cast so benchmark runs are comparable. Names should be stable across games unless the user explicitly randomizes the cast. The cast will need backstories inserted into their system prompts.
 
 Initial suggested cast:
 
@@ -272,11 +271,14 @@ The UI should render partial output while preserving the final assistant message
 
 Recommended architecture:
 
-- React client calls local backend endpoints.
-- Backend reads `OPENAI_API_KEY` from the process environment.
-- Backend uses the OpenAI API for chat, structured decisions, memory summaries, and host behavior.
-- Backend validates structured outputs before mutating game state.
-- Backend records request metadata needed for debugging, but does not log secrets.
+- React client calls Cloudflare Worker API endpoints under `/api/*`.
+- The Worker reads `OPENAI_API_KEY` from Cloudflare Worker secrets via the `env` binding.
+- Production secret setup uses `wrangler secret put OPENAI_API_KEY` or the Cloudflare dashboard; the key is not stored in `wrangler.toml`.
+- Local development should use `.env.example` as the committed template, with real secret files ignored by git. The existing `.env` should not be read into source control or documentation.
+- The Worker uses the OpenAI API for chat, structured decisions, memory summaries, and host behavior.
+- The Worker validates structured outputs before mutating D1 game state.
+- The Worker records request metadata needed for debugging, but does not log secrets or full hidden prompts.
+- The Worker ensures that all players' prompts in each step are append-only and use prompt caching where supported.
 
 Suggested endpoints:
 
@@ -290,17 +292,16 @@ POST /api/games/:gameId/vote
 POST /api/games/:gameId/reveal
 ```
 
-For the MVP, the backend can be a small Node server living beside the Vite app. If deployment targets serverless infrastructure later, isolate the game engine and OpenAI client behind service modules so route handlers stay thin.
+The initial repository includes `wrangler.toml`, `worker/index.ts`, and a D1 migration. `wrangler.toml` binds the `survibe` D1 database as `env.DB`, declares `OPENAI_API_KEY` as a required secret, and points Wrangler at the Worker entrypoint.
 
 ## 9. Persistence
 
-MVP persistence can start with SQLite or a local JSON-backed store. SQLite is preferable because the project will quickly need relational queries over games, players, messages, votes, and events.
+MVP persistence uses Cloudflare D1. D1 gives the Worker a SQL database through the `DB` binding and keeps schema changes versioned in SQL migration files.
 
 Recommended tables:
 
 - `games`
 - `players`
-- `ai_profiles`
 - `relationships`
 - `messages`
 - `tribal_councils`
@@ -309,6 +310,8 @@ Recommended tables:
 - `memory_summaries`
 
 Persist full transcripts for auditability, but provide compact memory summaries to AI players to control token cost and reduce context drift.
+
+The first migration creates these tables in `migrations/0001_initial.sql`. JSON fields are stored as text in D1 for early flexibility; once gameplay stabilizes, heavily queried properties can be promoted into columns.
 
 ## 10. Game Engine Responsibilities
 
@@ -325,9 +328,8 @@ Model outputs can propose:
 The engine enforces:
 
 - Only active players can chat, answer, and vote.
-- Immune players cannot receive valid votes.
 - Eliminated players cannot affect future rounds.
-- Every active non-immune target is valid unless rules say otherwise.
+- Every active non-host player is a valid vote target unless rules say otherwise.
 - A round cannot advance until required actions are complete.
 - Tie behavior is deterministic for MVP.
 
@@ -348,7 +350,6 @@ Minimum metrics:
 - Rounds survived.
 - Times voting with the majority.
 - Times receiving votes.
-- Times immune.
 - Number of successful target eliminations.
 - Number of betrayed alliances.
 - Number of AI players with high trust at elimination time.
@@ -386,7 +387,7 @@ src/
 
 The interface should feel like a focused game tool rather than a marketing site:
 
-- Left rail: roster, immunity, placement risk.
+- Left rail: roster, relationship hints, placement risk.
 - Main panel: active chat or Tribal Council.
 - Right rail: round timeline, notes, voting history.
 - Compact controls and clear status labels.
@@ -394,10 +395,10 @@ The interface should feel like a focused game tool rather than a marketing site:
 
 ## 13. Backend Module Plan
 
-Suggested server structure:
+Suggested Worker backend structure:
 
 ```txt
-server/
+worker/
   index.ts
   routes/
     games.ts
@@ -415,8 +416,9 @@ server/
     schemas.ts
     memory.ts
   db/
-    schema.ts
-    store.ts
+    d1Store.ts
+migrations/
+  0001_initial.sql
 ```
 
 Key boundaries:
@@ -425,14 +427,14 @@ Key boundaries:
 - `game/engine.ts` coordinates state transitions.
 - `ai/prompts.ts` assembles prompt context.
 - `ai/schemas.ts` defines structured output schemas.
-- `db/store.ts` hides persistence implementation.
+- `db/d1Store.ts` hides D1 query details from route handlers and the game engine.
+- `worker/index.ts` should stay thin: route dispatch, CORS, JSON parsing, and error responses only.
 
 ## 14. Testing Strategy
 
 Initial tests should cover deterministic rules:
 
 - Valid and invalid vote targets.
-- Immunity enforcement.
 - Round state transitions.
 - Elimination and placement assignment.
 - Tie handling.
@@ -445,15 +447,17 @@ AI integration tests should use mocked model responses first. Live OpenAI smoke 
 ### Milestone 1: Static Playable Shell
 
 - Vite, React, TypeScript project setup.
+- Cloudflare Worker API scaffold with health check and game creation endpoint.
+- D1 schema migration applied locally.
 - Stable cast.
-- In-memory game state.
+- D1-backed game records.
 - Camp chat UI with mocked AI responses.
 - Tribal Council screen with mocked Jeff questions.
 - Vote and reveal flow.
 
 ### Milestone 2: Real AI Chat
 
-- Server-side OpenAI client.
+- Worker OpenAI client.
 - Streaming human-to-AI private chat.
 - AI profiles and prompt assembly.
 - Transcript persistence.
@@ -467,7 +471,7 @@ AI integration tests should use mocked model responses first. Live OpenAI smoke 
 
 ### Milestone 4: Persistence and Metrics
 
-- SQLite-backed store.
+- D1-backed resume flow.
 - Resume existing game.
 - Game over report.
 - Benchmark metric export.
@@ -484,9 +488,10 @@ AI integration tests should use mocked model responses first. Live OpenAI smoke 
 - **Prompt leakage:** AI players may reveal instructions. Mitigate with prompt wording, output filtering, and treating leakage as benchmark-relevant behavior if it occurs.
 - **Unfair hidden information:** AI-to-AI conversations can make the game feel opaque. Mitigate with post-round summaries and consistent rules about what becomes public.
 - **Model drift:** Different model versions may change benchmark difficulty. Record model IDs and prompt versions per game.
-- **Cost growth:** Full transcripts will become expensive. Use memory summaries and scoped context windows.
+- **Cloudflare Worker limits:** Long AI orchestration steps may need careful request budgeting, streaming, and possibly background queues later.
+- **Cost growth:** Full transcripts will become expensive. Use memory summaries, scoped context windows, and prompt caching where available.
 - **Evaluation validity:** The game is partly subjective. Keep deterministic rule enforcement and exportable event logs.
 
 ## 17. Immediate Next Step
 
-Scaffold the Vite, TypeScript, React project with a small Node backend, then implement Milestone 1 with mocked AI behavior before connecting the OpenAI API.
+Install dependencies, set the `OPENAI_API_KEY` Cloudflare secret, apply the first D1 migration, then build the Vite React shell against the Worker API.

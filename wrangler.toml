@@ -1,0 +1,18 @@
+name = "survibe"
+main = "worker/index.ts"
+compatibility_date = "2026-05-21"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "survibe"
+database_id = "b1774660-a4bc-4fea-9ddf-c9cfe05d297d"
+migrations_dir = "migrations"
+
+[vars]
+APP_ENV = "development"
+
+[secrets]
+required = ["OPENAI_API_KEY"]
