@@ -1,6 +1,6 @@
 import { Crown, MessageCircle, Send, Skull, Users, Vote } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
-import { advanceToTribal, castVote, createGame, revealVotes, sendChat } from "./engine/client";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { advanceToTribal, castVote, createGame, getGame, revealVotes, sendChat } from "./engine/client";
 import type { GameMessage, GameView, PlayerSummary } from "./shared/types";
 
 const playerName = (game: GameView | null, playerId: string | null) => {
@@ -22,6 +22,19 @@ const privateMessagesFor = (messages: GameMessage[], humanId: string, aiId: stri
       ((message.senderPlayerId === humanId && message.recipientPlayerId === aiId) ||
         (message.senderPlayerId === aiId && message.recipientPlayerId === humanId)),
   );
+
+const gameIdFromPath = () => {
+  const match = /^\/games\/([^/]+)$/.exec(window.location.pathname);
+  return match ? decodeURIComponent(match[1]) : null;
+};
+
+const setGamePath = (gameId: string | null) => {
+  const nextPath = gameId ? `/games/${encodeURIComponent(gameId)}` : "/";
+
+  if (window.location.pathname !== nextPath) {
+    window.history.pushState({}, "", nextPath);
+  }
+};
 
 const Setup = ({ onCreate, busy }: { onCreate: (name: string, aiCount: number) => void; busy: boolean }) => {
   const [name, setName] = useState("Player");
@@ -246,6 +259,45 @@ export const App = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const loadFromUrl = () => {
+      const gameId = gameIdFromPath();
+
+      if (!gameId) {
+        setGame(null);
+        setSelectedAiId(null);
+        setSelectedVote("");
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      getGame(gameId)
+        .then((loadedGame) => {
+          setGame(loadedGame);
+          setSelectedVote("");
+          setSelectedAiId((current) => {
+            if (current && loadedGame.players.some((player) => player.id === current && player.kind === "ai" && player.status === "active")) {
+              return current;
+            }
+
+            return aiPlayers(loadedGame)[0]?.id ?? null;
+          });
+        })
+        .catch((err) => {
+          setGame(null);
+          setSelectedAiId(null);
+          setError(err instanceof Error ? err.message : "Could not load game.");
+        })
+        .finally(() => setBusy(false));
+    };
+
+    loadFromUrl();
+    window.addEventListener("popstate", loadFromUrl);
+
+    return () => window.removeEventListener("popstate", loadFromUrl);
+  }, []);
+
   const selectedAi = useMemo(() => {
     if (!game) {
       return null;
@@ -260,6 +312,7 @@ export const App = () => {
     try {
       const nextGame = await action();
       setGame(nextGame);
+      setGamePath(nextGame.id);
       setSelectedVote("");
       if (!selectedAiId) {
         setSelectedAiId(aiPlayers(nextGame)[0]?.id ?? null);
