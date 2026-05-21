@@ -1,5 +1,11 @@
 import type { ChatRequest, CreateGameRequest, GameEvent, GameView, TribalAnswerRequest, VoteRequest } from "@survibe/shared";
-import { generateAiPrivateTurn, generateAiTribalAnswer, generateAiVote, generateJeffTribalQuestion } from "./ai/openaiClient";
+import {
+  buildDebugAiContexts,
+  generateAiPrivateTurn,
+  generateAiTribalAnswer,
+  generateAiVote,
+  generateJeffTribalQuestion,
+} from "./ai/openaiClient";
 import { addEvent, addMessage, addVote, createGame, eliminatePlayer, getGame, updateGameStatus } from "./db/d1Store";
 import { activeAiPlayers, activeContestants, assertActiveTarget, findPlayer, getPlacement, shouldEndGame } from "./game/rules";
 
@@ -664,6 +670,12 @@ export default {
       if (request.method === "GET" && gameMatch?.gameId) {
         const game = await getGame(env.DB, gameMatch.gameId);
         return jsonGame(game);
+      }
+
+      const debugContextMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/debug\/ai-contexts$/);
+      if (request.method === "GET" && debugContextMatch?.gameId) {
+        const game = await getGame(env.DB, debugContextMatch.gameId);
+        return game ? json({ contexts: buildDebugAiContexts(game) }) : notFound();
       }
 
       const chatMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/chat\/(?<playerId>[^/]+)$/);

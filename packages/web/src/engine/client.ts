@@ -1,4 +1,11 @@
-import type { ChatRequest, CreateGameRequest, GameView, TribalAnswerRequest, VoteRequest } from "@survibe/shared";
+import type {
+  AiDebugContextsResponse,
+  ChatRequest,
+  CreateGameRequest,
+  GameView,
+  TribalAnswerRequest,
+  VoteRequest,
+} from "@survibe/shared";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
@@ -24,6 +31,8 @@ export const createGame = (body: CreateGameRequest) =>
   });
 
 export const getGame = (gameId: string) => request<GameView>(`/api/games/${gameId}`);
+
+export const getDebugAiContexts = (gameId: string) => request<AiDebugContextsResponse>(`/api/games/${gameId}/debug/ai-contexts`);
 
 export const sendChat = (gameId: string, aiPlayerId: string, body: ChatRequest) =>
   request<GameView>(`/api/games/${gameId}/chat/${aiPlayerId}`, {

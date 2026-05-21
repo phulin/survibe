@@ -1,7 +1,16 @@
-import { Clock, Crown, MessageCircle, Play, Send, Skull, Users, Vote } from "lucide-react";
+import { Bug, Clock, Crown, MessageCircle, Play, Send, Skull, Users, Vote } from "lucide-react";
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { advanceToTribal, answerTribalCouncil, castVote, createGame, getGame, revealVotes, sendChat } from "./engine/client";
-import type { GameMessage, GameView, PlayerSummary } from "@survibe/shared";
+import {
+  advanceToTribal,
+  answerTribalCouncil,
+  castVote,
+  createGame,
+  getDebugAiContexts,
+  getGame,
+  revealVotes,
+  sendChat,
+} from "./engine/client";
+import type { AiDebugContext, AiDebugContextMessage, GameMessage, GameView, PlayerSummary } from "@survibe/shared";
 
 const nearBottomScrollThreshold = 80;
 
@@ -421,15 +430,214 @@ const Roster = ({ game, selectedId, onSelect }: { game: GameView; selectedId: st
   </aside>
 );
 
+const parseDebugContent = (content: string) => {
+  try {
+    return JSON.parse(content) as unknown;
+  } catch {
+    return content;
+  }
+};
+
+const asDebugText = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
+
+const debugTypeName = (type: string | null) => {
+  switch (type) {
+    case "contestant_dossiers":
+      return "Dossiers";
+    case "current_task":
+      return "Task";
+    case "game_event":
+      return "Event";
+    case "no_response":
+      return "No Response";
+    case "private_message":
+      return "PM";
+    case "response":
+      return "Response";
+    case "tribal_answer":
+      return "Tribal";
+    case "tribal_question":
+      return "Question";
+    case "vote":
+      return "Vote";
+    default:
+      return "Message";
+  }
+};
+
+const debugSpeakerName = (role: AiDebugContextMessage["role"]) => {
+  if (role === "assistant") {
+    return "Agent";
+  }
+
+  if (role === "user") {
+    return "User";
+  }
+
+  return "System";
+};
+
+const debugMessageLabel = (message: AiDebugContextMessage) => {
+  if (message.role === "system") {
+    return "System Prompt";
+  }
+
+  try {
+    const parsed = JSON.parse(message.content) as Record<string, unknown>;
+    const type = debugTypeName(asDebugText(parsed.type));
+
+    return `${debugSpeakerName(message.role)} ${type}`;
+  } catch {
+    return `${debugSpeakerName(message.role)} Message`;
+  }
+};
+
+const debugMessageDetail = (message: AiDebugContextMessage, index: number) => {
+  if (message.role === "system") {
+    return "Identity, game rules, protocol, and private memory.";
+  }
+
+  try {
+    const parsed = JSON.parse(message.content) as Record<string, unknown>;
+    const sender = asDebugText(parsed.senderName);
+    const recipient = asDebugText(parsed.recipientName);
+    const eventType = asDebugText(parsed.eventType);
+
+    if (sender && recipient) {
+      return `${sender} -> ${recipient}`;
+    }
+
+    if (sender) {
+      return sender;
+    }
+
+    if (eventType) {
+      return eventType;
+    }
+
+    return `Message ${index + 1}`;
+  } catch {
+    return `Message ${index + 1}`;
+  }
+};
+
+const formatDebugKey = (key: string) =>
+  key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const hiddenDebugBodyKeys = new Set(["type", "round", "senderName", "recipientName"]);
+
+const DebugJsonValue = ({ value, depth = 0 }: { value: unknown; depth?: number }) => {
+  if (value === null) {
+    return <span className="debug-json-null">null</span>;
+  }
+
+  if (typeof value === "string") {
+    return <span className="debug-json-string">{value}</span>;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return <span className="debug-json-primitive">{String(value)}</span>;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return <span className="debug-json-muted">None</span>;
+    }
+
+    return (
+      <div className="debug-json-list">
+        {value.map((item, index) => (
+          <div className="debug-json-list-item" key={index}>
+            <span className="debug-json-index">{index + 1}</span>
+            <DebugJsonValue value={item} depth={depth + 1} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).filter(([key]) => !hiddenDebugBodyKeys.has(key));
+    if (entries.length === 0) {
+      return <span className="debug-json-muted">Empty</span>;
+    }
+
+    return (
+      <div className={`debug-json-object ${depth > 0 ? "nested" : ""}`}>
+        {entries.map(([key, item]) => (
+          <div className="debug-json-row" key={key}>
+            <span className="debug-json-key">{formatDebugKey(key)}</span>
+            <div className="debug-json-value">
+              <DebugJsonValue value={item} depth={depth + 1} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return <span className="debug-json-muted">{String(value)}</span>;
+};
+
+const DebugMessageBody = ({ content }: { content: string }) => {
+  const parsed = parseDebugContent(content);
+
+  if (typeof parsed === "string") {
+    return <div className="debug-text-body">{parsed}</div>;
+  }
+
+  return <DebugJsonValue value={parsed} />;
+};
+
+const DebugContextPanel = ({ context }: { context: AiDebugContext | null }) => (
+  <aside className="debug-panel" aria-label="AI context debug panel">
+    <header className="debug-header">
+      <div>
+        <p className="eyebrow">Debug</p>
+        <h3>AI context</h3>
+      </div>
+      <Bug size={19} />
+    </header>
+    {context ? (
+      <>
+        <div className="debug-meta">
+          <span>{context.promptMessages.length} prompt messages</span>
+          <span>{context.observedPrivateMessageCount} private observed</span>
+        </div>
+        <div className="debug-messages">
+          {context.promptMessages.map((message, index) => (
+            <details className={`debug-message ${message.role}`} key={`${message.sourceMessageId ?? message.role}-${index}`}>
+              <summary>
+                <span className="debug-type">{debugMessageLabel(message)}</span>
+                <span>{debugMessageDetail(message, index)}</span>
+              </summary>
+              <div className="debug-message-body">
+                <DebugMessageBody content={message.content} />
+              </div>
+            </details>
+          ))}
+        </div>
+      </>
+    ) : (
+      <div className="empty-state">Debug context is unavailable for this conversation.</div>
+    )}
+  </aside>
+);
+
 const ChatPanel = ({
   game,
   selectedAi,
+  debugContext,
   busy,
   pendingChats,
   onSend,
 }: {
   game: GameView;
   selectedAi: PlayerSummary | null;
+  debugContext: AiDebugContext | null;
   busy: boolean;
   pendingChats: PendingChats;
   onSend: (message: string) => void;
@@ -489,7 +697,7 @@ const ChatPanel = ({
   };
 
   return (
-    <section className="panel chat-panel">
+    <section className="panel chat-panel conversation-panel">
       <header className="panel-header">
         <div>
           <p className="eyebrow">Private chat</p>
@@ -541,6 +749,7 @@ const ChatPanel = ({
           <Send size={18} />
         </button>
       </form>
+      <DebugContextPanel context={selectedAi ? debugContext : null} />
     </section>
   );
 };
@@ -780,6 +989,7 @@ const GameHeader = ({
 
 export const App = () => {
   const [game, setGame] = useState<GameView | null>(null);
+  const [debugContexts, setDebugContexts] = useState<AiDebugContext[]>([]);
   const [recentGames, setRecentGames] = useState<RecentGame[]>(() => loadRecentGames());
   const [selectedAiId, setSelectedAiId] = useState<string | null>(null);
   const [selectedVote, setSelectedVote] = useState("");
@@ -834,8 +1044,12 @@ export const App = () => {
   };
 
   const loadGameById = async (gameId: string) => {
-    const loadedGame = await getGame(gameId);
+    const [loadedGame, debugPayload] = await Promise.all([
+      getGame(gameId),
+      getDebugAiContexts(gameId).catch(() => ({ contexts: [] })),
+    ]);
     applyServerGame(loadedGame);
+    setDebugContexts(debugPayload.contexts);
     return loadedGame;
   };
 
@@ -845,6 +1059,7 @@ export const App = () => {
 
       if (!gameId) {
         setGame(null);
+        setDebugContexts([]);
         setRecentGames(loadRecentGames());
         setSelectedAiId(null);
         setSelectedVote("");
@@ -861,6 +1076,7 @@ export const App = () => {
       loadGameById(gameId)
         .catch((err) => {
           setGame(null);
+          setDebugContexts([]);
           setSelectedAiId(null);
           setPendingChats({});
           setError(err instanceof Error ? err.message : "Could not load game.");
@@ -881,6 +1097,14 @@ export const App = () => {
 
     return game.players.find((player) => player.id === selectedAiId && player.kind === "ai") ?? aiContestants(game)[0] ?? null;
   }, [game, selectedAiId]);
+
+  const selectedDebugContext = useMemo(() => {
+    if (!selectedAi) {
+      return null;
+    }
+
+    return debugContexts.find((context) => context.playerId === selectedAi.id) ?? null;
+  }, [debugContexts, selectedAi]);
 
   const startGame = async (humanName: string, aiCount: number) => {
     setBusy(true);
@@ -1060,6 +1284,7 @@ export const App = () => {
         <ChatPanel
           game={game}
           selectedAi={selectedAi}
+          debugContext={selectedDebugContext}
           busy={busy}
           pendingChats={pendingChats}
           onSend={(message) => selectedAi && sendOptimisticChat(selectedAi.id, message)}

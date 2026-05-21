@@ -1,4 +1,4 @@
-import type { AiMessageType, GameEvent, GameMessage, GameView, PlayerSummary } from "@survibe/shared";
+import type { AiDebugContext, AiMessageType, GameEvent, GameMessage, GameView, PlayerSummary } from "@survibe/shared";
 
 export type OpenAiEnv = {
   OPENAI_API_KEY?: string;
@@ -454,6 +454,39 @@ const buildInput = (game: GameView, ai: PlayerSummary, task: string) => {
     },
   ];
 };
+
+export const buildDebugAiContexts = (game: GameView): AiDebugContext[] =>
+  game.players
+    .filter((player) => player.kind === "ai")
+    .map((ai) => {
+      const systemPrompt = buildSystemPrompt(ai);
+      const contestantDossiers = buildContestantDossierObjects(game);
+      const conversation = buildAppendOnlyConversation(game, ai);
+
+      return {
+        playerId: ai.id,
+        playerName: ai.name,
+        playerStatus: ai.status,
+        observedPrivateMessageCount: game.messages.filter((message) => message.channel === "private" && messageObservedBy(message, ai)).length,
+        promptMessages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: jsonContent(
+              typedMessage("contestant_dossiers", {
+                note: "These are all named contestants; no contestant is identified as human or AI.",
+                contestants: contestantDossiers,
+              }),
+            ),
+          },
+          ...conversation.map((turn) => ({
+            role: turn.role,
+            content: turn.content,
+            sourceMessageId: turn.sourceMessageId,
+          })),
+        ],
+      };
+    });
 
 const buildHostInput = (game: GameView, host: PlayerSummary, task: string) => {
   const contestantDossiers = buildContestantDossierObjects(game);

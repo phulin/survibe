@@ -82,6 +82,24 @@ export type GameView = {
   events: GameEvent[];
 };
 
+export type AiDebugContextMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+  sourceMessageId?: string;
+};
+
+export type AiDebugContext = {
+  playerId: string;
+  playerName: string;
+  playerStatus: PlayerStatus;
+  promptMessages: AiDebugContextMessage[];
+  observedPrivateMessageCount: number;
+};
+
+export type AiDebugContextsResponse = {
+  contexts: AiDebugContext[];
+};
+
 export type CreateGameRequest = {
   humanName: string;
   aiCount: number;
