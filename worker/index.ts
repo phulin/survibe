@@ -72,6 +72,13 @@ const revealVotes = async (env: Env, gameId: string) => {
   for (const vote of roundVotes) {
     tally.set(vote.targetId, (tally.get(vote.targetId) ?? 0) + 1);
   }
+  const voteTally = activeContestants(game.players)
+    .map((player) => ({
+      playerId: player.id,
+      playerName: player.name,
+      votes: tally.get(player.id) ?? 0,
+    }))
+    .sort((a, b) => b.votes - a.votes || a.playerName.localeCompare(b.playerName));
 
   const [eliminatedId] = [...tally.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
   const eliminated = assertActiveTarget(game, eliminatedId);
@@ -83,6 +90,8 @@ const revealVotes = async (env: Env, gameId: string) => {
     playerName: eliminated.name,
     placement,
     voteCount: tally.get(eliminatedId) ?? 0,
+    voteTally,
+    totalVotes: roundVotes.length,
   });
 
   const refreshed = await getGame(env.DB, game.id);

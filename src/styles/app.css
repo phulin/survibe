@@ -393,6 +393,41 @@ select {
   padding-left: 10px;
 }
 
+.vote-results {
+  display: grid;
+  gap: 7px;
+  margin-top: 4px;
+  border: 1px solid rgba(31, 49, 43, 0.12);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fffdf3;
+}
+
+.vote-results > strong {
+  color: #193d35;
+  font-size: 13px;
+}
+
+.vote-results > span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  color: #43504b;
+  font-size: 13px;
+}
+
+.vote-results b {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #193d35;
+  color: #fffdf3;
+  font-size: 12px;
+}
+
 .toast,
 .result {
   position: fixed;

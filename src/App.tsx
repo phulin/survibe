@@ -28,6 +28,12 @@ type PendingChat = {
   message: string;
 };
 
+type VoteTallyRow = {
+  playerId: string;
+  playerName: string;
+  votes: number;
+};
+
 const gameIdFromPath = () => {
   const match = /^\/games\/([^/]+)$/.exec(window.location.pathname);
   return match ? decodeURIComponent(match[1]) : null;
@@ -39,6 +45,70 @@ const setGamePath = (gameId: string | null) => {
   if (window.location.pathname !== nextPath) {
     window.history.pushState({}, "", nextPath);
   }
+};
+
+const parseVoteTally = (value: unknown): VoteTallyRow[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((row) => {
+    if (!row || typeof row !== "object") {
+      return [];
+    }
+
+    const record = row as Record<string, unknown>;
+    const playerId = typeof record.playerId === "string" ? record.playerId : "";
+    const playerNameValue = record.playerName;
+    const votesValue = record.votes;
+
+    if (typeof playerNameValue !== "string" || typeof votesValue !== "number") {
+      return [];
+    }
+
+    return [{ playerId, playerName: playerNameValue, votes: votesValue }];
+  });
+};
+
+const latestVoteTally = (game: GameView) => {
+  const eliminated = game.events.filter((event) => event.type === "player_eliminated").at(-1);
+
+  if (!eliminated) {
+    return null;
+  }
+
+  const savedRows = parseVoteTally(eliminated.payload.voteTally);
+  if (savedRows.length > 0) {
+    return {
+      round: eliminated.round,
+      rows: savedRows,
+    };
+  }
+
+  const roundVotes = game.votes.filter((vote) => vote.round === eliminated.round);
+  if (roundVotes.length === 0) {
+    return null;
+  }
+
+  const counts = new Map<string, number>();
+  for (const vote of roundVotes) {
+    counts.set(vote.targetId, (counts.get(vote.targetId) ?? 0) + 1);
+  }
+
+  const eliminatedPlayerId = typeof eliminated.payload.playerId === "string" ? eliminated.payload.playerId : null;
+  const rows = game.players
+    .filter((player) => player.kind !== "host" && (player.status === "active" || player.id === eliminatedPlayerId || counts.has(player.id)))
+    .map((player) => ({
+      playerId: player.id,
+      playerName: player.name,
+      votes: counts.get(player.id) ?? 0,
+    }))
+    .sort((a, b) => b.votes - a.votes || a.playerName.localeCompare(b.playerName));
+
+  return {
+    round: eliminated.round,
+    rows,
+  };
 };
 
 const Setup = ({ onCreate, busy }: { onCreate: (name: string, aiCount: number) => void; busy: boolean }) => {
@@ -231,6 +301,7 @@ const TribalPanel = ({
 }) => {
   const currentVotes = game.votes.filter((vote) => vote.round === game.round);
   const eliminated = game.events.filter((event) => event.type === "player_eliminated").at(-1);
+  const revealedTally = latestVoteTally(game);
 
   return (
     <aside className="rail council">
@@ -281,9 +352,20 @@ const TribalPanel = ({
           .slice(-2)
           .map((message) => (
             <p key={message.id}>{message.content}</p>
-          ))}
+        ))}
         {currentVotes.length > 0 ? <p>{currentVotes.length} votes cast this round.</p> : null}
         {eliminated ? <p>Last eliminated: {String(eliminated.payload.playerName ?? "Unknown")}</p> : null}
+        {revealedTally ? (
+          <div className="vote-results">
+            <strong>Round {revealedTally.round} vote count</strong>
+            {revealedTally.rows.map((row) => (
+              <span key={row.playerId || row.playerName}>
+                <span>{row.playerName}</span>
+                <b>{row.votes}</b>
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
     </aside>
   );

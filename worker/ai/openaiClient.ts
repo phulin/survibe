@@ -93,6 +93,32 @@ const formatVote = (game: GameView, vote: VoteRecord, order: number): Conversati
   content: `[round ${vote.round}] Vote observed: ${playerName(game, vote.voterId)} voted for ${playerName(game, vote.targetId)}. Rationale: ${vote.rationale}`,
 });
 
+const formatVoteTally = (payload: Record<string, unknown>) => {
+  if (!Array.isArray(payload.voteTally)) {
+    return "";
+  }
+
+  const rows = payload.voteTally
+    .map((row) => {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      const record = row as Record<string, unknown>;
+      const playerNameValue = record.playerName;
+      const votesValue = record.votes;
+
+      if (typeof playerNameValue !== "string" || typeof votesValue !== "number") {
+        return null;
+      }
+
+      return `${playerNameValue}: ${votesValue}`;
+    })
+    .filter((row): row is string => Boolean(row));
+
+  return rows.length > 0 ? ` Vote count: ${rows.join(", ")}.` : "";
+};
+
 const formatEvent = (event: GameEvent, order: number): ConversationTurn => {
   let content = `[round ${event.round}] Game event: ${event.type}.`;
 
@@ -113,7 +139,7 @@ const formatEvent = (event: GameEvent, order: number): ConversationTurn => {
   }
 
   if (event.type === "player_eliminated") {
-    content = `[round ${event.round}] ${String(event.payload.playerName ?? "A contestant")} was eliminated. Placement: ${String(event.payload.placement ?? "unknown")}.`;
+    content = `[round ${event.round}] ${String(event.payload.playerName ?? "A contestant")} was eliminated. Placement: ${String(event.payload.placement ?? "unknown")}.${formatVoteTally(event.payload)}`;
   }
 
   if (event.type === "round_started") {
