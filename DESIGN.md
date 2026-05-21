@@ -66,6 +66,7 @@ These can be added later after the core social loop is playable and measurable.
   - One thread per AI opponent.
   - Messages stream from the AI for natural responsiveness.
   - Each AI preserves personality, strategy, and relationship memory across rounds.
+  - Private messages are delivered through a per-game Durable Object. The transcript stores only observed game data; the harness supplies the current response task after selecting the next queued recipient turn.
   - After receiving a private message at camp, an AI may use the `privateMessages` structured side action to privately contact other active named contestants.
   - Tool-triggered AI-to-AI messages can create bounded follow-up turns, but the engine caps depth and total turns to prevent runaway conversations.
   - UI makes it clear that private chat is not guaranteed to stay private in the game simulation; AIs may lie or leak information based on strategy.
@@ -238,7 +239,7 @@ The prompt should tell the model:
 - Keep responses concise enough for a chat UI.
 - Do not claim to perform actions outside the game interface.
 
-Every AI request should include the entire game history observed by that specific named contestant as an actual ordered conversation, not as a rewritten summary block. Server events, Tribal Council messages, revealed aggregate vote counts, eliminations, and other public observations are appended as `user` turns. Individual ballots are stored server-side for adjudication and audit, but contestants do not observe who cast each vote. Private conversations are scoped per participant: a private message appears only in the conversation log for the named AI contestant who sent or received it. The current AI contestant's prior messages are appended as `assistant` turns. Do not summarize, drop, or rewrite earlier observed turns for the MVP; context exhaustion will be handled later if it becomes a real blocker.
+Every AI request should include the entire game history observed by that specific named contestant as an actual ordered conversation, not as a rewritten summary block. Server events, Tribal Council messages, revealed aggregate vote counts, eliminations, and other public observations are appended as `user` turns. Individual ballots are stored server-side for adjudication and audit, but contestants do not observe who cast each vote. Private conversations are scoped per participant: a private message appears only in the conversation log for the named AI contestant who sent or received it. The current AI contestant's prior messages are appended as `assistant` turns. Do not put harness instructions inside historical message objects; response instructions belong in the current task turn after the observed transcript. Do not summarize, drop, or rewrite earlier observed turns for the MVP; context exhaustion will be handled later if it becomes a real blocker.
 
 Model-visible contestant dossiers should not identify which contestant is controlled by a human. The human contestant receives a normal name, archetype, biography, and playstyle just like AI contestants.
 
@@ -281,6 +282,7 @@ Recommended architecture:
 
 - React client calls Cloudflare Worker API endpoints under `/api/*`.
 - D1/Worker is the source of truth for game state. The browser may keep a transient render snapshot and UI-only selections, but all gameplay mutations must be persisted on the server and then reloaded by game ID.
+- Agent private-message delivery uses one Cloudflare Durable Object per game. D1 remains the durable transcript and game-state store; the Durable Object owns live ordering, concurrency, and high/low priority agent turn queues. User-originated private messages are placed in the high-priority queue, while agent-to-agent follow-ups are placed in the low-priority queue. The object processes one agent turn at a time and always checks the user queue before continuing agent chatter.
 - The Worker reads `OPENAI_API_KEY` from Cloudflare Worker secrets via the `env` binding.
 - Production secret setup uses `wrangler secret put OPENAI_API_KEY` or the Cloudflare dashboard; the key is not stored in `wrangler.toml`.
 - Local development should use `.env.example` as the committed template, with real secret files ignored by git. The existing `.env` should not be read into source control or documentation.

@@ -5,6 +5,7 @@ import { activeAiPlayers, activeContestants, assertActiveTarget, findPlayer, get
 
 export interface Env {
   DB: D1Database;
+  GAME_COORDINATOR: DurableObjectNamespace;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   APP_ENV: string;
@@ -35,6 +36,9 @@ const badRequest = (message: string) => json({ error: message }, { status: 400 }
 const tribalQuestion = "The social game is over for tonight. The vote is about trust, threat level, and who can survive one more round.";
 const maxAiPrivateTurnsPerRequest = 8;
 const maxAiPrivateToolDepth = 2;
+const userQueueKey = "agent-turns:user";
+const agentQueueKey = "agent-turns:agent";
+const processedJobsKey = "agent-turns:processed";
 
 const readJson = async <T>(request: Request): Promise<T> => {
   try {
@@ -266,31 +270,201 @@ const castAiVotes = async (env: Env, gameId: string) => {
   }
 };
 
-type PendingAiPrivateMessage = {
-  senderId: string;
-  recipientId: string;
-  content: string;
-  messageId: string | null;
+type AgentTurnJob = {
+  id: string;
+  gameId: string;
+  round: number;
+  sourceMessageId: string;
+  senderPlayerId: string;
+  recipientPlayerId: string;
   depth: number;
+  priority: "user" | "agent";
+  createdAt: string;
 };
 
-const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: PendingAiPrivateMessage[]) => {
-  const queue = [...initialMessages];
-  let processed = 0;
+type ClaimedAgentTurnJob = {
+  job: AgentTurnJob;
+  queueKey: string;
+};
 
-  while (queue.length > 0 && processed < maxAiPrivateTurnsPerRequest) {
-    const incoming = queue.shift()!;
-    const game = await getGame(env.DB, gameId);
+type PrivateChatBody = {
+  gameId?: string;
+  playerId?: string;
+  message?: string;
+};
 
-    if (!game || game.status !== "camp") {
-      break;
+export class GameCoordinator {
+  private drainPromise: Promise<void> | null = null;
+
+  constructor(
+    private readonly state: DurableObjectState,
+    private readonly env: Env,
+  ) {}
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === "POST" && url.pathname === "/private-chat") {
+      return this.handlePrivateChat(await readJson<PrivateChatBody>(request));
     }
 
-    const ai = findPlayer(game, incoming.recipientId);
-    const sender = findPlayer(game, incoming.senderId);
+    return notFound();
+  }
 
-    if (!ai || ai.kind !== "ai" || ai.status !== "active" || !sender || sender.kind === "host" || sender.status !== "active") {
-      continue;
+  async alarm(): Promise<void> {
+    await this.ensureDrain();
+  }
+
+  private async handlePrivateChat(body: PrivateChatBody): Promise<Response> {
+    const gameId = body.gameId ?? "";
+    const playerId = body.playerId ?? "";
+    const game = await getGame(this.env.DB, gameId);
+
+    if (!game) {
+      return notFound();
+    }
+    if (game.status !== "camp") {
+      return badRequest("Private messages can only be sent at camp.");
+    }
+
+    const ai = findPlayer(game, playerId);
+    const human = findPlayer(game, game.humanPlayerId);
+    if (!ai || ai.kind !== "ai" || ai.status !== "active" || !human) {
+      return badRequest("Chat target must be a named active AI contestant.");
+    }
+
+    const humanMessage = body.message?.trim();
+    if (!humanMessage) {
+      return badRequest("Message is required.");
+    }
+
+    const message = await addMessage(this.env.DB, game.id, game.round, "private", human.id, ai.id, humanMessage);
+    await this.enqueueJob(
+      {
+        id: `${message.id}:${ai.id}`,
+        gameId: game.id,
+        round: game.round,
+        sourceMessageId: message.id,
+        senderPlayerId: human.id,
+        recipientPlayerId: ai.id,
+        depth: 0,
+        priority: "user",
+        createdAt: message.createdAt,
+      },
+      userQueueKey,
+    );
+
+    await this.ensureDrain();
+    return jsonGame(await getGame(this.env.DB, game.id));
+  }
+
+  private async ensureDrain() {
+    if (!this.drainPromise) {
+      this.drainPromise = this.drainAgentTurns().finally(() => {
+        this.drainPromise = null;
+      });
+    }
+
+    await this.drainPromise;
+  }
+
+  private async enqueueJob(job: AgentTurnJob, queueKey: string) {
+    const processed = await this.processedJobIds();
+    if (processed.has(job.id)) {
+      return;
+    }
+
+    const [userQueue, agentQueue] = await Promise.all([this.queue(userQueueKey), this.queue(agentQueueKey)]);
+    if ([...userQueue, ...agentQueue].some((item) => item.id === job.id)) {
+      return;
+    }
+
+    const queue = queueKey === userQueueKey ? userQueue : agentQueue;
+    queue.push(job);
+    queue.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    await this.state.storage.put(queueKey, queue);
+  }
+
+  private async drainAgentTurns() {
+    let processed = 0;
+
+    while (processed < maxAiPrivateTurnsPerRequest) {
+      const claimed = await this.takeNextJob();
+      if (!claimed) {
+        break;
+      }
+
+      try {
+        await this.processAgentTurn(claimed.job);
+        await this.markJobProcessed(claimed.job.id);
+      } catch {
+        await this.requeueJob(claimed.job, claimed.queueKey);
+        await this.state.storage.setAlarm(Date.now() + 5_000);
+        break;
+      }
+
+      processed += 1;
+    }
+
+    if (await this.hasPendingJobs()) {
+      await this.state.storage.setAlarm(Date.now() + 1_000);
+    }
+  }
+
+  private async takeNextJob(): Promise<ClaimedAgentTurnJob | null> {
+    const userQueue = await this.queue(userQueueKey);
+    if (userQueue.length > 0) {
+      const [job, ...rest] = userQueue;
+      await this.state.storage.put(userQueueKey, rest);
+      return { job, queueKey: userQueueKey };
+    }
+
+    const agentQueue = await this.queue(agentQueueKey);
+    if (agentQueue.length > 0) {
+      const [job, ...rest] = agentQueue;
+      await this.state.storage.put(agentQueueKey, rest);
+      return { job, queueKey: agentQueueKey };
+    }
+
+    return null;
+  }
+
+  private async requeueJob(job: AgentTurnJob, queueKey: string) {
+    const processed = await this.processedJobIds();
+    if (processed.has(job.id)) {
+      return;
+    }
+
+    const queue = await this.queue(queueKey);
+    if (!queue.some((item) => item.id === job.id)) {
+      await this.state.storage.put(queueKey, [job, ...queue]);
+    }
+  }
+
+  private async processAgentTurn(job: AgentTurnJob) {
+    const game = await getGame(this.env.DB, job.gameId);
+
+    if (!game || game.status !== "camp" || job.round !== game.round) {
+      return;
+    }
+
+    const incoming = game.messages.find((message) => message.id === job.sourceMessageId);
+    const ai = findPlayer(game, job.recipientPlayerId);
+    const sender = findPlayer(game, job.senderPlayerId);
+
+    if (
+      !incoming ||
+      incoming.round !== game.round ||
+      incoming.senderPlayerId !== job.senderPlayerId ||
+      incoming.recipientPlayerId !== job.recipientPlayerId ||
+      !ai ||
+      ai.kind !== "ai" ||
+      ai.status !== "active" ||
+      !sender ||
+      sender.kind === "host" ||
+      sender.status !== "active"
+    ) {
+      return;
     }
 
     const messageCandidates = activeContestants(game.players).filter(
@@ -299,7 +473,7 @@ const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: 
 
     let turn;
     try {
-      turn = await generateAiPrivateTurn(env, game, ai, sender, incoming.content, incoming.messageId, messageCandidates);
+      turn = await generateAiPrivateTurn(this.env, game, ai, sender, incoming.content, incoming.id, messageCandidates);
     } catch {
       turn = {
         reply: "I hear you. I need to compare that with what everyone else is saying before I lock anything in.",
@@ -308,26 +482,32 @@ const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: 
     }
 
     const reply = turn.reply?.trim() ?? "";
-    const replyMessage = reply ? await addMessage(env.DB, game.id, game.round, "private", ai.id, sender.id, reply) : null;
-    processed += 1;
+    const replyMessage = reply ? await addMessage(this.env.DB, game.id, game.round, "private", ai.id, sender.id, reply) : null;
 
-    if (incoming.depth >= maxAiPrivateToolDepth) {
-      continue;
+    if (job.depth >= maxAiPrivateToolDepth) {
+      return;
     }
 
     if (sender.kind === "ai" && replyMessage) {
-      queue.push({
-        senderId: ai.id,
-        recipientId: sender.id,
-        content: reply,
-        messageId: replyMessage.id,
-        depth: incoming.depth + 1,
-      });
+      await this.enqueueJob(
+        {
+          id: `${replyMessage.id}:${sender.id}`,
+          gameId: game.id,
+          round: game.round,
+          sourceMessageId: replyMessage.id,
+          senderPlayerId: ai.id,
+          recipientPlayerId: sender.id,
+          depth: job.depth + 1,
+          priority: "agent",
+          createdAt: replyMessage.createdAt,
+        },
+        agentQueueKey,
+      );
     }
 
-    const refreshed = await getGame(env.DB, gameId);
+    const refreshed = await getGame(this.env.DB, job.gameId);
     if (!refreshed || refreshed.status !== "camp") {
-      break;
+      return;
     }
 
     const latestCandidates = activeContestants(refreshed.players).filter(
@@ -340,19 +520,44 @@ const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: 
         continue;
       }
 
-      const toolMessage = await addMessage(env.DB, refreshed.id, refreshed.round, "private", ai.id, recipient.id, toolCall.message);
+      const toolMessage = await addMessage(this.env.DB, refreshed.id, refreshed.round, "private", ai.id, recipient.id, toolCall.message);
       if (recipient.kind === "ai") {
-        queue.push({
-          senderId: ai.id,
-          recipientId: recipient.id,
-          content: toolCall.message,
-          messageId: toolMessage.id,
-          depth: incoming.depth + 1,
-        });
+        await this.enqueueJob(
+          {
+            id: `${toolMessage.id}:${recipient.id}`,
+            gameId: refreshed.id,
+            round: refreshed.round,
+            sourceMessageId: toolMessage.id,
+            senderPlayerId: ai.id,
+            recipientPlayerId: recipient.id,
+            depth: job.depth + 1,
+            priority: "agent",
+            createdAt: toolMessage.createdAt,
+          },
+          agentQueueKey,
+        );
       }
     }
   }
-};
+
+  private async queue(key: string) {
+    return (await this.state.storage.get<AgentTurnJob[]>(key)) ?? [];
+  }
+
+  private async hasPendingJobs() {
+    const [userQueue, agentQueue] = await Promise.all([this.queue(userQueueKey), this.queue(agentQueueKey)]);
+    return userQueue.length > 0 || agentQueue.length > 0;
+  }
+
+  private async processedJobIds() {
+    return new Set((await this.state.storage.get<string[]>(processedJobsKey)) ?? []);
+  }
+
+  private async markJobProcessed(jobId: string) {
+    const processed = (await this.state.storage.get<string[]>(processedJobsKey)) ?? [];
+    await this.state.storage.put(processedJobsKey, [...processed.filter((id) => id !== jobId), jobId].slice(-500));
+  }
+}
 
 const addAiTribalAnswers = async (env: Env, gameId: string, question: string) => {
   let game = await getGame(env.DB, gameId);
@@ -431,38 +636,23 @@ export default {
 
       const chatMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/chat\/(?<playerId>[^/]+)$/);
       if (request.method === "POST" && chatMatch?.gameId && chatMatch.playerId) {
-        const game = await getGame(env.DB, chatMatch.gameId);
-        if (!game) {
-          return notFound();
-        }
-        if (game.status !== "camp") {
-          return badRequest("Private messages can only be sent at camp.");
-        }
-
-        const ai = findPlayer(game, chatMatch.playerId);
-        const human = findPlayer(game, game.humanPlayerId);
-        if (!ai || ai.kind !== "ai" || ai.status !== "active" || !human) {
-          return badRequest("Chat target must be a named active AI contestant.");
-        }
-
         const body = await readJson<ChatRequest>(request);
-        const humanMessage = body.message?.trim();
-        if (!humanMessage) {
-          return badRequest("Message is required.");
-        }
+        const id = env.GAME_COORDINATOR.idFromName(chatMatch.gameId);
+        const gameCoordinator = env.GAME_COORDINATOR.get(id);
 
-        const message = await addMessage(env.DB, game.id, game.round, "private", human.id, ai.id, humanMessage);
-        await processAiPrivateTurns(env, game.id, [
-          {
-            senderId: human.id,
-            recipientId: ai.id,
-            content: humanMessage,
-            messageId: message.id,
-            depth: 0,
-          },
-        ]);
-
-        return jsonGame(await getGame(env.DB, game.id));
+        return gameCoordinator.fetch(
+          new Request("https://game-coordinator/private-chat", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              gameId: chatMatch.gameId,
+              playerId: chatMatch.playerId,
+              message: body.message,
+            }),
+          }),
+        );
       }
 
       const tribalMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/advance-to-tribal$/);

@@ -202,11 +202,6 @@ type ConversationTurn = {
   sourceMessageId?: string;
 };
 
-type MessageInstruction = {
-  messageId: string;
-  instruction: string;
-};
-
 const jsonContent = (value: Record<string, unknown>) => JSON.stringify(value);
 
 const typedMessage = (type: AiMessageType, value: Record<string, unknown>) => ({
@@ -243,7 +238,7 @@ const messageObservedBy = (message: GameMessage, ai: PlayerSummary) => {
   return message.senderPlayerId === ai.id || message.recipientPlayerId === ai.id;
 };
 
-const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, order: number, instruction?: MessageInstruction): ConversationTurn => {
+const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, order: number): ConversationTurn => {
   const sender = playerName(game, message.senderPlayerId);
   const recipient = message.recipientPlayerId ? playerName(game, message.recipientPlayerId) : "the group";
 
@@ -287,7 +282,6 @@ const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, 
         recipientName: message.recipientPlayerId ? recipient : null,
         visibility: message.channel,
         message: message.content,
-        taskInstruction: instruction?.messageId === message.id ? instruction.instruction : null,
       }),
     ),
     sourceMessageId: message.id,
@@ -366,11 +360,11 @@ const formatEvent = (event: GameEvent, order: number): ConversationTurn => {
   };
 };
 
-const buildAppendOnlyConversation = (game: GameView, ai: PlayerSummary, instruction?: MessageInstruction, stopAfterMessageId?: string) => {
+const buildAppendOnlyConversation = (game: GameView, ai: PlayerSummary, stopAfterMessageId?: string) => {
   let order = 0;
   const turns = [
     ...game.events.map((event) => formatEvent(event, order++)),
-    ...game.messages.filter((message) => messageObservedBy(message, ai)).map((message) => formatMessage(game, ai, message, order++, instruction)),
+    ...game.messages.filter((message) => messageObservedBy(message, ai)).map((message) => formatMessage(game, ai, message, order++)),
   ].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.order - b.order);
 
   if (!stopAfterMessageId) {
@@ -484,7 +478,7 @@ const buildHostInput = (game: GameView, host: PlayerSummary, task: string) => {
   ];
 };
 
-const buildInputWithConversation = (game: GameView, ai: PlayerSummary, conversation: ConversationTurn[], outputInstructions?: string) => {
+const buildInputWithConversation = (game: GameView, ai: PlayerSummary, conversation: ConversationTurn[], task: string, outputInstructions?: string) => {
   const systemPrompt = buildSystemPrompt(ai, outputInstructions);
   const contestantDossiers = buildContestantDossierObjects(game);
 
@@ -500,6 +494,10 @@ const buildInputWithConversation = (game: GameView, ai: PlayerSummary, conversat
       ),
     },
     ...conversation.map((turn) => ({ role: turn.role, content: turn.content })),
+    {
+      role: "user" as const,
+      content: jsonContent(typedMessage("current_task", { task })),
+    },
   ];
 };
 
@@ -538,17 +536,13 @@ export const generateAiPrivateTurn = async (
   const privateTurnOutputInstructions = `Private chat output format: return {"type":"response","response":"private reply text","privateMessages":[{"type":"private_message","recipientName":"Name","message":"private message text"}]}.
 Use "privateMessages":[] when messaging another named contestant is not strategically useful.
 Use {"type":"no_response","response":"","privateMessages":[]} only when no in-world response should be sent.`;
-  const instruction = currentMessage
-    ? {
-        messageId: currentMessage.id,
-        instruction: `Instruction for this received private message: respond privately to ${sender.name} as ${ai.name}, then optionally use your only tool.
+  const task = `Respond privately to ${sender.name} as ${ai.name}, based on the latest delivered private message.
+Latest delivered message id: ${currentMessage?.id ?? "unknown"}
 Available side action: privateMessages
 Eligible private message recipients: ${candidateNames}
-Do not message yourself, eliminated contestants, or anyone outside the eligible recipient list.`,
-      }
-    : undefined;
-  const conversation = buildAppendOnlyConversation(game, ai, instruction, currentMessage?.id);
-  const input = buildInputWithConversation(game, ai, conversation, privateTurnOutputInstructions);
+Do not message yourself, eliminated contestants, or anyone outside the eligible recipient list.`;
+  const conversation = buildAppendOnlyConversation(game, ai, currentMessage?.id);
+  const input = buildInputWithConversation(game, ai, conversation, task, privateTurnOutputInstructions);
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",

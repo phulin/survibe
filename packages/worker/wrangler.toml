@@ -17,6 +17,14 @@ database_name = "survibe"
 database_id = "b1774660-a4bc-4fea-9ddf-c9cfe05d297d"
 migrations_dir = "migrations"
 
+[[durable_objects.bindings]]
+name = "GAME_COORDINATOR"
+class_name = "GameCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameCoordinator"]
+
 [vars]
 APP_ENV = "development"
 OPENAI_MODEL = "gpt-5.4-mini"
