@@ -1,6 +1,7 @@
 name = "survibe"
 main = "src/index.ts"
 compatibility_date = "2026-05-21"
+routes = [{ pattern = "survibe.net", custom_domain = true }]
 
 [observability]
 enabled = true
