@@ -23,6 +23,11 @@ const privateMessagesFor = (messages: GameMessage[], humanId: string, aiId: stri
         (message.senderPlayerId === aiId && message.recipientPlayerId === humanId)),
   );
 
+type PendingChat = {
+  aiId: string;
+  message: string;
+};
+
 const gameIdFromPath = () => {
   const match = /^\/games\/([^/]+)$/.exec(window.location.pathname);
   return match ? decodeURIComponent(match[1]) : null;
@@ -113,15 +118,18 @@ const ChatPanel = ({
   game,
   selectedAi,
   busy,
+  pendingChat,
   onSend,
 }: {
   game: GameView;
   selectedAi: PlayerSummary | null;
   busy: boolean;
+  pendingChat: PendingChat | null;
   onSend: (message: string) => void;
 }) => {
   const [draft, setDraft] = useState("");
   const messages = selectedAi ? privateMessagesFor(game.messages, game.humanPlayerId, selectedAi.id) : [];
+  const showPending = Boolean(selectedAi && pendingChat?.aiId === selectedAi.id);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -144,13 +152,31 @@ const ChatPanel = ({
       </header>
       <div className="messages">
         {selectedAi ? (
-          messages.length > 0 ? (
-            messages.map((message) => (
-              <div className={`bubble ${message.senderPlayerId === game.humanPlayerId ? "human" : "ai"}`} key={message.id}>
-                <strong>{playerName(game, message.senderPlayerId)}</strong>
-                <p>{message.content}</p>
-              </div>
-            ))
+          messages.length > 0 || showPending ? (
+            <>
+              {messages.map((message) => (
+                <div className={`bubble ${message.senderPlayerId === game.humanPlayerId ? "human" : "ai"}`} key={message.id}>
+                  <strong>{playerName(game, message.senderPlayerId)}</strong>
+                  <p>{message.content}</p>
+                </div>
+              ))}
+              {showPending ? (
+                <>
+                  <div className="bubble human pending">
+                    <strong>{playerName(game, game.humanPlayerId)}</strong>
+                    <p>{pendingChat!.message}</p>
+                  </div>
+                  <div className="bubble ai typing">
+                    <strong>{selectedAi!.name}</strong>
+                    <span className="typing-dots" aria-label={`${selectedAi!.name} is typing`}>
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </div>
+                </>
+              ) : null}
+            </>
           ) : (
             <div className="empty-state">No private conversation yet.</div>
           )
@@ -256,6 +282,7 @@ export const App = () => {
   const [game, setGame] = useState<GameView | null>(null);
   const [selectedAiId, setSelectedAiId] = useState<string | null>(null);
   const [selectedVote, setSelectedVote] = useState("");
+  const [pendingChat, setPendingChat] = useState<PendingChat | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -340,6 +367,19 @@ export const App = () => {
     }
   };
 
+  const sendOptimisticChat = async (aiId: string, message: string) => {
+    if (!game) {
+      return;
+    }
+
+    try {
+      setPendingChat({ aiId, message });
+      await runServerAction(game.id, () => sendChat(game.id, aiId, { message }));
+    } finally {
+      setPendingChat(null);
+    }
+  };
+
   if (!game) {
     return (
       <>
@@ -356,7 +396,8 @@ export const App = () => {
         game={game}
         selectedAi={selectedAi}
         busy={busy}
-        onSend={(message) => selectedAi && runServerAction(game.id, () => sendChat(game.id, selectedAi.id, { message }))}
+        pendingChat={pendingChat}
+        onSend={(message) => selectedAi && sendOptimisticChat(selectedAi.id, message)}
       />
       <TribalPanel
         game={game}
