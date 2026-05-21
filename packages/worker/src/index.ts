@@ -307,18 +307,19 @@ const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: 
       };
     }
 
-    const replyMessage = await addMessage(env.DB, game.id, game.round, "private", ai.id, sender.id, turn.reply);
+    const reply = turn.reply?.trim() ?? "";
+    const replyMessage = reply ? await addMessage(env.DB, game.id, game.round, "private", ai.id, sender.id, reply) : null;
     processed += 1;
 
     if (incoming.depth >= maxAiPrivateToolDepth) {
       continue;
     }
 
-    if (sender.kind === "ai") {
+    if (sender.kind === "ai" && replyMessage) {
       queue.push({
         senderId: ai.id,
         recipientId: sender.id,
-        content: turn.reply,
+        content: reply,
         messageId: replyMessage.id,
         depth: incoming.depth + 1,
       });

@@ -6,6 +6,17 @@ export type PlayerStatus = "active" | "eliminated";
 
 export type MessageChannel = "private" | "tribal" | "system";
 
+export type AiMessageType =
+  | "contestant_dossiers"
+  | "current_task"
+  | "game_event"
+  | "no_response"
+  | "private_message"
+  | "response"
+  | "tribal_answer"
+  | "tribal_question"
+  | "vote";
+
 export type PlayerSummary = {
   id: string;
   kind: PlayerKind;
