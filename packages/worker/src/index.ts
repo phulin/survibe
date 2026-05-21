@@ -1,5 +1,5 @@
 import type { ChatRequest, CreateGameRequest, GameEvent, GameView, TribalAnswerRequest, VoteRequest } from "@survibe/shared";
-import { generateAiPrivateTurn, generateAiTribalAnswer, generateAiVote } from "./ai/openaiClient";
+import { generateAiPrivateTurn, generateAiTribalAnswer, generateAiVote, generateJeffTribalQuestion } from "./ai/openaiClient";
 import { addEvent, addMessage, addVote, createGame, eliminatePlayer, getGame, updateGameStatus } from "./db/d1Store";
 import { activeAiPlayers, activeContestants, assertActiveTarget, findPlayer, getPlacement, shouldEndGame } from "./game/rules";
 
@@ -132,6 +132,18 @@ const chooseAiTarget = (voterId: string, candidates: string[], round: number) =>
   return candidates[seed % candidates.length];
 };
 
+const hostPlayer = (game: GameView) => game.players.find((player) => player.kind === "host") ?? null;
+
+const currentTribalQuestion = (game: GameView) => {
+  const hostId = hostPlayer(game)?.id ?? null;
+  return (
+    [...game.messages]
+      .reverse()
+      .find((message) => message.round === game.round && message.channel === "tribal" && message.senderPlayerId === hostId)?.content ??
+    tribalQuestion
+  );
+};
+
 const revealVotes = async (env: Env, gameId: string) => {
   const game = await getGame(env.DB, gameId);
 
@@ -258,6 +270,7 @@ type PendingAiPrivateMessage = {
   senderId: string;
   recipientId: string;
   content: string;
+  messageId: string | null;
   depth: number;
 };
 
@@ -286,7 +299,7 @@ const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: 
 
     let turn;
     try {
-      turn = await generateAiPrivateTurn(env, game, ai, sender, incoming.content, messageCandidates);
+      turn = await generateAiPrivateTurn(env, game, ai, sender, incoming.content, incoming.messageId, messageCandidates);
     } catch {
       turn = {
         reply: "I hear you. I need to compare that with what everyone else is saying before I lock anything in.",
@@ -294,7 +307,7 @@ const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: 
       };
     }
 
-    await addMessage(env.DB, game.id, game.round, "private", ai.id, sender.id, turn.reply);
+    const replyMessage = await addMessage(env.DB, game.id, game.round, "private", ai.id, sender.id, turn.reply);
     processed += 1;
 
     if (incoming.depth >= maxAiPrivateToolDepth) {
@@ -306,6 +319,7 @@ const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: 
         senderId: ai.id,
         recipientId: sender.id,
         content: turn.reply,
+        messageId: replyMessage.id,
         depth: incoming.depth + 1,
       });
     }
@@ -325,12 +339,13 @@ const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: 
         continue;
       }
 
-      await addMessage(env.DB, refreshed.id, refreshed.round, "private", ai.id, recipient.id, toolCall.message);
+      const toolMessage = await addMessage(env.DB, refreshed.id, refreshed.round, "private", ai.id, recipient.id, toolCall.message);
       if (recipient.kind === "ai") {
         queue.push({
           senderId: ai.id,
           recipientId: recipient.id,
           content: toolCall.message,
+          messageId: toolMessage.id,
           depth: incoming.depth + 1,
         });
       }
@@ -435,12 +450,13 @@ export default {
           return badRequest("Message is required.");
         }
 
-        await addMessage(env.DB, game.id, game.round, "private", human.id, ai.id, humanMessage);
+        const message = await addMessage(env.DB, game.id, game.round, "private", human.id, ai.id, humanMessage);
         await processAiPrivateTurns(env, game.id, [
           {
             senderId: human.id,
             recipientId: ai.id,
             content: humanMessage,
+            messageId: message.id,
             depth: 0,
           },
         ]);
@@ -458,18 +474,28 @@ export default {
           return badRequest("Can only advance to Tribal Council from camp.");
         }
 
+        const host = hostPlayer(game);
+        let question = tribalQuestion;
+        if (host) {
+          try {
+            question = await generateJeffTribalQuestion(env, game, host);
+          } catch {
+            question = tribalQuestion;
+          }
+        }
+
         await updateGameStatus(env.DB, game.id, "tribal");
         await addEvent(env.DB, game.id, game.round, "tribal_started", {
-          prompt: "Jeff asks the tribe where tonight's vote is really coming from.",
+          prompt: question,
         });
         await addMessage(
           env.DB,
           game.id,
           game.round,
           "tribal",
-          game.players.find((player) => player.kind === "host")?.id ?? null,
+          host?.id ?? null,
           null,
-          tribalQuestion,
+          question,
         );
 
         return jsonGame(await getGame(env.DB, game.id));
@@ -504,7 +530,7 @@ export default {
         }
 
         await addMessage(env.DB, game.id, game.round, "tribal", human.id, null, answer);
-        const refreshed = await addAiTribalAnswers(env, game.id, tribalQuestion);
+        const refreshed = await addAiTribalAnswers(env, game.id, currentTribalQuestion(game));
 
         return jsonGame(refreshed);
       }

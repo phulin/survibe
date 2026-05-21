@@ -79,6 +79,7 @@ input:disabled {
 
 .setup-form,
 .recent-games,
+.game-header,
 .panel,
 .rail,
 .result {
@@ -185,8 +186,10 @@ textarea {
 }
 
 .primary,
-.tribal-actions button,
-.composer button {
+.game-header-actions button,
+.composer button,
+.tribal-composer button,
+.vote-composer button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -201,10 +204,60 @@ textarea {
 .app-shell {
   height: 100dvh;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 300px;
+  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
   overflow: hidden;
   padding: 16px;
+}
+
+.game-header {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.game-header-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  text-transform: capitalize;
+}
+
+.game-header-main .eyebrow {
+  margin-bottom: 2px;
+}
+
+.game-header-main strong {
+  display: block;
+  color: #193d35;
+  font-size: 18px;
+}
+
+.game-header-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #47544e;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.game-header-meta span {
+  border-radius: 999px;
+  background: #f8f7ef;
+  padding: 6px 9px;
+}
+
+.game-header-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .rail,
@@ -226,7 +279,7 @@ textarea {
 }
 
 .chat-panel,
-.council {
+.game-header {
   z-index: 1;
 }
 
@@ -249,6 +302,7 @@ textarea {
   gap: 8px;
 }
 
+.tribal-shortcut,
 .player {
   position: relative;
   width: 100%;
@@ -261,6 +315,25 @@ textarea {
   background: #f8f7ef;
   color: #17201d;
   text-align: left;
+}
+
+.tribal-shortcut {
+  margin-bottom: 10px;
+  background: #193d35;
+  color: #fffdf3;
+}
+
+.tribal-shortcut .avatar {
+  background: #f2d18a;
+  color: #193d35;
+}
+
+.tribal-shortcut small {
+  color: rgba(255, 253, 243, 0.72);
+}
+
+.tribal-shortcut.selected {
+  outline: 2px solid #bf7c35;
 }
 
 .player:hover,
@@ -380,6 +453,32 @@ textarea {
   background: #dfeadb;
 }
 
+.bubble.tribal {
+  width: min(76ch, 92%);
+  max-width: min(76ch, 92%);
+  background: #fff8e8;
+  border-left: 4px solid #bf7c35;
+}
+
+.bubble.tribal.human {
+  align-self: flex-end;
+  background: #dfeadb;
+  border-left-color: #193d35;
+}
+
+.bubble.tribal.ai {
+  background: #f7f3e6;
+}
+
+.bubble.tribal.host {
+  background: #193d35;
+  color: #fffdf3;
+}
+
+.bubble.tribal.host strong {
+  color: rgba(255, 253, 243, 0.78);
+}
+
 .bubble.pending {
   opacity: 0.78;
 }
@@ -455,38 +554,52 @@ textarea {
   aspect-ratio: 1;
 }
 
-.status-strip {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 14px;
-  border-radius: 6px;
-  background: #f8f7ef;
-  padding: 10px;
-  text-transform: capitalize;
+.tribal-chat-panel {
+  background:
+    linear-gradient(180deg, rgba(191, 124, 53, 0.08), transparent 220px),
+    rgba(255, 255, 255, 0.74);
 }
 
-.tribal-actions {
+.tribal-composer,
+.vote-composer {
   display: grid;
   gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(31, 49, 43, 0.11);
 }
 
-.tribal-answer {
-  display: grid;
-  gap: 10px;
+.tribal-composer {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
 }
 
-.timeline {
-  margin-top: 16px;
-  display: grid;
-  gap: 10px;
+.tribal-composer textarea {
+  min-height: 70px;
+}
+
+.vote-composer {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.vote-composer.inline {
+  border-top: 0;
+  padding-top: 6px;
+}
+
+.vote-composer > span {
+  align-self: center;
   color: #47544e;
-  font-size: 14px;
+  font-weight: 800;
 }
 
-.timeline p {
-  margin: 0;
-  border-left: 3px solid #bf7c35;
-  padding-left: 10px;
+.reveal-composer {
+  align-items: center;
+}
+
+.action-bubble {
+  align-self: center;
+  width: min(620px, 92%);
 }
 
 .vote-results {
@@ -497,6 +610,13 @@ textarea {
   border-radius: 8px;
   padding: 10px;
   background: #fffdf3;
+}
+
+.vote-results.inline {
+  margin-top: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .vote-results > strong {
@@ -557,6 +677,19 @@ textarea {
     padding: 10px;
   }
 
+  .game-header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .game-header-actions {
+    justify-content: stretch;
+  }
+
+  .game-header-actions button {
+    width: 100%;
+  }
+
   .player-card {
     left: 10px;
     right: 10px;
@@ -568,5 +701,10 @@ textarea {
   .player:hover .player-card,
   .player:focus-visible .player-card {
     transform: translateY(0);
+  }
+
+  .tribal-composer,
+  .vote-composer {
+    grid-template-columns: 1fr;
   }
 }

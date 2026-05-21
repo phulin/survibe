@@ -5,6 +5,8 @@ import type { GameMessage, GameView, PlayerSummary } from "@survibe/shared";
 
 const nearBottomScrollThreshold = 80;
 
+const tribalPanelStatuses = new Set<GameView["status"]>(["tribal", "voting", "reveal"]);
+
 const playerName = (game: GameView | null, playerId: string | null) => {
   if (!game || !playerId) {
     return "System";
@@ -17,6 +19,8 @@ const activePlayers = (game: GameView) => game.players.filter((player) => player
 
 const aiPlayers = (game: GameView) => game.players.filter((player) => player.kind === "ai" && player.status === "active");
 
+const isTribalPanelStatus = (status: GameView["status"]) => tribalPanelStatuses.has(status);
+
 const privateMessagesFor = (messages: GameMessage[], humanId: string, aiId: string) =>
   messages.filter(
     (message) =>
@@ -27,12 +31,25 @@ const privateMessagesFor = (messages: GameMessage[], humanId: string, aiId: stri
 
 const chatBubbleContent = (content: string) => content.replace(/^Message (?:to|from) [^:]+:\s*/i, "");
 
+const LoadingDots = ({ label }: { label: string }) => (
+  <span className="typing-dots" aria-label={label}>
+    <span />
+    <span />
+    <span />
+  </span>
+);
+
 type PendingChat = {
   aiId: string;
   message: string;
 };
 
 type PendingChats = Record<string, PendingChat>;
+
+type PendingTribalAnswer = {
+  round: number;
+  message: string;
+};
 
 type VoteTallyRow = {
   playerId: string;
@@ -241,8 +258,8 @@ const parseVoteTally = (value: unknown): VoteTallyRow[] => {
   });
 };
 
-const latestVoteTally = (game: GameView) => {
-  const eliminated = game.events.filter((event) => event.type === "player_eliminated").at(-1);
+const voteTallyForRound = (game: GameView, round: number) => {
+  const eliminated = game.events.filter((event) => event.type === "player_eliminated" && event.round === round).at(-1);
 
   if (!eliminated) {
     return null;
@@ -357,6 +374,18 @@ const Roster = ({ game, selectedId, onSelect }: { game: GameView; selectedId: st
       <Users size={18} />
       <span>Cast</span>
     </div>
+    {isTribalPanelStatus(game.status) ? (
+      <button className="tribal-shortcut selected" type="button" aria-pressed="true">
+        <span className="avatar">
+          <Crown size={17} />
+        </span>
+        <span>
+          <strong>Tribal Council</strong>
+          <small>Public answers and vote</small>
+        </span>
+        <Vote size={16} />
+      </button>
+    ) : null}
     <div className="players">
       {game.players
         .filter((player) => player.kind !== "host")
@@ -482,11 +511,7 @@ const ChatPanel = ({
                   </div>
                   <div className="bubble ai typing">
                     <strong>{selectedAi!.name}</strong>
-                    <span className="typing-dots" aria-label={`${selectedAi!.name} is typing`}>
-                      <span />
-                      <span />
-                      <span />
-                    </span>
+                    <LoadingDots label={`${selectedAi!.name} is typing`} />
                   </div>
                 </>
               ) : null}
@@ -516,33 +541,74 @@ const ChatPanel = ({
   );
 };
 
-const TribalPanel = ({
+const TribalChatPanel = ({
   game,
   selectedVote,
   onSelectVote,
-  onTribal,
   onAnswer,
   onVote,
   onReveal,
   busy,
+  pendingAnswer,
+  hiddenMessageIds,
+  revealingMessages,
+  displayRound,
 }: {
   game: GameView;
   selectedVote: string;
   onSelectVote: (id: string) => void;
-  onTribal: () => void;
   onAnswer: (message: string) => void;
   onVote: () => void;
   onReveal: () => void;
   busy: boolean;
+  pendingAnswer: PendingTribalAnswer | null;
+  hiddenMessageIds: Set<string>;
+  revealingMessages: boolean;
+  displayRound: number;
 }) => {
   const [tribalAnswer, setTribalAnswer] = useState("");
-  const eliminated = game.events.filter((event) => event.type === "player_eliminated").at(-1);
-  const revealedTally = latestVoteTally(game);
-  const currentVoteCount = votesCastForCurrentRound(game);
-  const humanAnswered = game.messages.some(
-    (message) => message.round === game.round && message.channel === "tribal" && message.senderPlayerId === game.humanPlayerId,
-  );
-  const canVote = game.status === "tribal" && humanAnswered;
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const wasNearBottomRef = useRef(true);
+  const tribalMessages = game.messages.filter((message) => message.round === displayRound && message.channel === "tribal");
+  const visibleTribalMessages = tribalMessages.filter((message) => !hiddenMessageIds.has(message.id));
+  const revealedTally = voteTallyForRound(game, displayRound);
+  const lastMessageId = visibleTribalMessages.at(-1)?.id;
+  const serverHumanAnswered = tribalMessages.some((message) => message.senderPlayerId === game.humanPlayerId);
+  const humanAnswerPending = pendingAnswer?.round === displayRound;
+  const humanAnswered = serverHumanAnswered || humanAnswerPending;
+  const isCurrentTribalRound = displayRound === game.round;
+  const canVote = game.status === "tribal" && isCurrentTribalRound && serverHumanAnswered && !revealingMessages;
+  const loadingLabel =
+    game.status === "voting"
+      ? "Revealing votes"
+      : game.status === "tribal" || revealingMessages
+        ? humanAnswered && selectedVote
+          ? "Votes are being cast"
+          : "Tribal Council is responding"
+        : "Loading";
+
+  const updateWasNearBottom = () => {
+    const node = messagesRef.current;
+    if (!node) {
+      wasNearBottomRef.current = true;
+      return;
+    }
+
+    wasNearBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= nearBottomScrollThreshold;
+  };
+
+  useLayoutEffect(() => {
+    const node = messagesRef.current;
+    if (!node) {
+      return;
+    }
+
+    if (wasNearBottomRef.current) {
+      node.scrollTop = node.scrollHeight;
+    }
+
+    updateWasNearBottom();
+  }, [lastMessageId, visibleTribalMessages.length, busy, game.status, humanAnswerPending, revealingMessages]);
 
   const submitAnswer = (event: FormEvent) => {
     event.preventDefault();
@@ -556,88 +622,155 @@ const TribalPanel = ({
   };
 
   return (
-    <aside className="rail council">
-      <div className="rail-title">
-        <Crown size={18} />
-        <span>Round {game.round}</span>
+    <section className="panel chat-panel tribal-chat-panel">
+      <header className="panel-header">
+        <div>
+          <p className="eyebrow">Tribal Council</p>
+          <h2>Round {displayRound}</h2>
+        </div>
+        <Crown size={22} />
+      </header>
+      <div className="messages" onScroll={updateWasNearBottom} ref={messagesRef}>
+        {tribalMessages.length > 0 || humanAnswerPending ? (
+          <>
+            {visibleTribalMessages.map((message) => {
+              const sender = game.players.find((player) => player.id === message.senderPlayerId);
+              const speakerKind = sender?.kind ?? "host";
+              return (
+                <div className={`bubble tribal ${speakerKind}`} key={message.id}>
+                  <strong>{playerName(game, message.senderPlayerId)}</strong>
+                  <p>{message.content}</p>
+                </div>
+              );
+            })}
+            {humanAnswerPending ? (
+              <div className="bubble tribal human pending">
+                <strong>{playerName(game, game.humanPlayerId)}</strong>
+                <p>{pendingAnswer.message}</p>
+              </div>
+            ) : null}
+            {(busy && (game.status === "tribal" || game.status === "voting")) || revealingMessages ? (
+              <div className="bubble tribal typing">
+                <strong>{loadingLabel}</strong>
+                <LoadingDots label={loadingLabel} />
+              </div>
+            ) : null}
+            {canVote ? (
+              <div className="bubble tribal action-bubble">
+                <strong>Cast your vote</strong>
+                <div className="vote-composer inline">
+                  <label>
+                    Vote target
+                    <select
+                      id="vote-target"
+                      name="vote-target"
+                      value={selectedVote}
+                      onChange={(event) => onSelectVote(event.target.value)}
+                      disabled={busy}
+                    >
+                      <option value="">Choose</option>
+                      {activePlayers(game)
+                        .filter((player) => player.id !== game.humanPlayerId)
+                        .map((player) => (
+                          <option value={player.id} key={player.id}>
+                            {player.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <button type="button" onClick={onVote} disabled={busy || !selectedVote}>
+                    <Vote size={18} />
+                    Vote
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {game.status === "voting" && isCurrentTribalRound ? (
+              <div className="bubble tribal action-bubble">
+                <strong>Votes are locked in.</strong>
+                <div className="vote-composer inline reveal-composer">
+                  <span>Reveal the vote count.</span>
+                  <button type="button" onClick={onReveal} disabled={busy}>
+                    <Skull size={18} />
+                    Reveal
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {revealedTally ? (
+              <div className="bubble tribal action-bubble">
+                <div className="vote-results inline">
+                  <strong>Round {revealedTally.round} vote count</strong>
+                  {revealedTally.rows.map((row) => (
+                    <span key={row.playerId || row.playerName}>
+                      <span>{row.playerName}</span>
+                      <b>{row.votes}</b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="empty-state">Tribal Council has not started.</div>
+        )}
       </div>
-      <div className="status-strip">
-        <span>Status</span>
-        <strong>{game.status}</strong>
+      {game.status === "tribal" && isCurrentTribalRound && !humanAnswered ? (
+        <form className="tribal-composer" onSubmit={submitAnswer}>
+          <textarea
+            id="tribal-answer"
+            name="tribal-answer"
+            value={tribalAnswer}
+            onChange={(event) => setTribalAnswer(event.target.value)}
+            disabled={busy}
+            placeholder="Answer at Tribal Council"
+            rows={3}
+          />
+          <button type="submit" disabled={busy || !tribalAnswer.trim()}>
+            <Send size={18} />
+            Answer
+          </button>
+        </form>
+      ) : null}
+    </section>
+  );
+};
+
+const GameHeader = ({
+  game,
+  onTribal,
+  busy,
+}: {
+  game: GameView;
+  onTribal: () => void;
+  busy: boolean;
+}) => {
+  const eliminated = game.events.filter((event) => event.type === "player_eliminated").at(-1);
+  const headerRevealedRound = game.status === "camp" ? game.round - 1 : game.round;
+  const revealedTally = voteTallyForRound(game, headerRevealedRound);
+  const currentVoteCount = votesCastForCurrentRound(game);
+
+  return (
+    <header className="game-header">
+      <div className="game-header-main">
+        <Crown size={19} />
+        <div>
+          <p className="eyebrow">Round {game.round}</p>
+          <strong>{game.status}</strong>
+        </div>
       </div>
-      <div className="tribal-actions">
+      <div className="game-header-meta">
+        {currentVoteCount !== null ? <span>{currentVoteCount} votes cast</span> : null}
+        {eliminated ? <span>Last eliminated: {String(eliminated.payload.playerName ?? "Unknown")}</span> : null}
+        {revealedTally ? <span>Round {revealedTally.round} revealed</span> : null}
+      </div>
+      <div className="game-header-actions">
         <button type="button" onClick={onTribal} disabled={busy || game.status !== "camp"}>
           <Crown size={17} />
           Tribal
         </button>
-        {game.status === "tribal" && !humanAnswered ? (
-          <form className="tribal-answer" onSubmit={submitAnswer}>
-            <label>
-              Tribal answer
-              <textarea
-                id="tribal-answer"
-                name="tribal-answer"
-                value={tribalAnswer}
-                onChange={(event) => setTribalAnswer(event.target.value)}
-                disabled={busy}
-                rows={4}
-              />
-            </label>
-            <button type="submit" disabled={busy || !tribalAnswer.trim()}>
-              Answer
-            </button>
-          </form>
-        ) : null}
-        <label>
-          Vote target
-          <select
-            id="vote-target"
-            name="vote-target"
-            value={selectedVote}
-            onChange={(event) => onSelectVote(event.target.value)}
-            disabled={busy || !canVote}
-          >
-            <option value="">Choose</option>
-            {activePlayers(game)
-              .filter((player) => player.id !== game.humanPlayerId)
-              .map((player) => (
-                <option value={player.id} key={player.id}>
-                  {player.name}
-                </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" onClick={onVote} disabled={busy || !selectedVote || !canVote}>
-          <Vote size={17} />
-          Vote
-        </button>
-        <button type="button" onClick={onReveal} disabled={busy || game.status !== "voting"}>
-          <Skull size={17} />
-          Reveal
-        </button>
       </div>
-      <div className="timeline">
-        {game.messages
-          .filter((message) => message.channel === "tribal")
-          .slice(-2)
-          .map((message) => (
-            <p key={message.id}>{message.content}</p>
-        ))}
-        {currentVoteCount !== null ? <p>{currentVoteCount} votes cast this round.</p> : null}
-        {eliminated ? <p>Last eliminated: {String(eliminated.payload.playerName ?? "Unknown")}</p> : null}
-        {revealedTally ? (
-          <div className="vote-results">
-            <strong>Round {revealedTally.round} vote count</strong>
-            {revealedTally.rows.map((row) => (
-              <span key={row.playerId || row.playerName}>
-                <span>{row.playerName}</span>
-                <b>{row.votes}</b>
-              </span>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    </aside>
+    </header>
   );
 };
 
@@ -647,14 +780,46 @@ export const App = () => {
   const [selectedAiId, setSelectedAiId] = useState<string | null>(null);
   const [selectedVote, setSelectedVote] = useState("");
   const [pendingChats, setPendingChats] = useState<PendingChats>({});
+  const [pendingTribalAnswer, setPendingTribalAnswer] = useState<PendingTribalAnswer | null>(null);
+  const [hiddenTribalMessageIds, setHiddenTribalMessageIds] = useState<Set<string>>(() => new Set());
+  const [tribalRevealQueue, setTribalRevealQueue] = useState<string[]>([]);
+  const [revealedRoundInChat, setRevealedRoundInChat] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasPendingChats = Object.keys(pendingChats).length > 0;
+  const showTribalPanel = game ? isTribalPanelStatus(game.status) || revealedRoundInChat !== null : false;
+  const tribalDisplayRound = game && revealedRoundInChat !== null ? revealedRoundInChat : (game?.round ?? 0);
+  const revealingTribalMessages = hiddenTribalMessageIds.size > 0 || tribalRevealQueue.length > 0;
 
-  const applyServerGame = (loadedGame: GameView) => {
+  useEffect(() => {
+    if (tribalRevealQueue.length === 0) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const [nextMessageId] = tribalRevealQueue;
+
+      setHiddenTribalMessageIds((current) => {
+        const next = new Set(current);
+        next.delete(nextMessageId);
+        return next;
+      });
+      setTribalRevealQueue((current) => current.slice(1));
+    }, 750);
+
+    return () => window.clearTimeout(timer);
+  }, [tribalRevealQueue]);
+
+  const applyServerGame = (loadedGame: GameView, options: { preserveTribalStaging?: boolean } = {}) => {
     setGame(loadedGame);
     setRecentGames(rememberGame(loadedGame));
     setSelectedVote("");
+    if (!options.preserveTribalStaging) {
+      setPendingTribalAnswer(null);
+      setHiddenTribalMessageIds(new Set());
+      setTribalRevealQueue([]);
+      setRevealedRoundInChat(null);
+    }
     setSelectedAiId((current) => {
       if (current && loadedGame.players.some((player) => player.id === current && player.kind === "ai" && player.status === "active")) {
         return current;
@@ -680,6 +845,10 @@ export const App = () => {
         setSelectedAiId(null);
         setSelectedVote("");
         setPendingChats({});
+        setPendingTribalAnswer(null);
+        setHiddenTribalMessageIds(new Set());
+        setTribalRevealQueue([]);
+        setRevealedRoundInChat(null);
         return;
       }
 
@@ -777,6 +946,70 @@ export const App = () => {
     }
   };
 
+  const revealVotesInChat = async () => {
+    if (!game) {
+      return;
+    }
+
+    const gameId = game.id;
+    const revealedRound = game.round;
+    setBusy(true);
+    setError(null);
+    try {
+      const revealedGame = await revealVotes(gameId);
+      applyServerGame(revealedGame, { preserveTribalStaging: true });
+      setPendingTribalAnswer(null);
+      setHiddenTribalMessageIds(new Set());
+      setTribalRevealQueue([]);
+      setRevealedRoundInChat(revealedRound);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendOptimisticTribalAnswer = async (message: string) => {
+    if (!game || pendingTribalAnswer) {
+      return;
+    }
+
+    const gameId = game.id;
+    const round = game.round;
+    const existingTribalIds = new Set(
+      game.messages.filter((item) => item.round === round && item.channel === "tribal").map((item) => item.id),
+    );
+
+    setBusy(true);
+    setError(null);
+    setPendingTribalAnswer({ round, message });
+    setHiddenTribalMessageIds(new Set());
+    setTribalRevealQueue([]);
+
+    try {
+      const answeredGame = await answerTribalCouncil(gameId, { message });
+      const newAiMessageIds = answeredGame.messages
+        .filter(
+          (item) =>
+            item.round === round &&
+            item.channel === "tribal" &&
+            !existingTribalIds.has(item.id) &&
+            item.senderPlayerId !== answeredGame.humanPlayerId,
+        )
+        .map((item) => item.id);
+
+      applyServerGame(answeredGame, { preserveTribalStaging: true });
+      setPendingTribalAnswer(null);
+      setHiddenTribalMessageIds(new Set(newAiMessageIds));
+      setTribalRevealQueue(newAiMessageIds);
+    } catch (err) {
+      setPendingTribalAnswer(null);
+      setError(err instanceof Error ? err.message : "Request failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!game) {
     return (
       <>
@@ -788,24 +1021,38 @@ export const App = () => {
 
   return (
     <main className="app-shell">
-      <Roster game={game} selectedId={selectedAi?.id ?? null} onSelect={setSelectedAiId} />
-      <ChatPanel
+      <GameHeader game={game} onTribal={() => runServerAction(game.id, () => advanceToTribal(game.id))} busy={busy || hasPendingChats} />
+      <Roster
         game={game}
-        selectedAi={selectedAi}
-        busy={busy}
-        pendingChats={pendingChats}
-        onSend={(message) => selectedAi && sendOptimisticChat(selectedAi.id, message)}
+        selectedId={showTribalPanel ? null : (selectedAi?.id ?? null)}
+        onSelect={(id) => {
+          setRevealedRoundInChat(null);
+          setSelectedAiId(id);
+        }}
       />
-      <TribalPanel
-        game={game}
-        selectedVote={selectedVote}
-        onSelectVote={setSelectedVote}
-        onTribal={() => runServerAction(game.id, () => advanceToTribal(game.id))}
-        onAnswer={(message) => runServerAction(game.id, () => answerTribalCouncil(game.id, { message }))}
-        onVote={() => runServerAction(game.id, () => castVote(game.id, { targetId: selectedVote }))}
-        onReveal={() => runServerAction(game.id, () => revealVotes(game.id))}
-        busy={busy || hasPendingChats}
-      />
+      {showTribalPanel ? (
+        <TribalChatPanel
+          game={game}
+          selectedVote={selectedVote}
+          onSelectVote={setSelectedVote}
+          onAnswer={sendOptimisticTribalAnswer}
+          onVote={() => runServerAction(game.id, () => castVote(game.id, { targetId: selectedVote }))}
+          onReveal={revealVotesInChat}
+          busy={busy || hasPendingChats}
+          pendingAnswer={pendingTribalAnswer}
+          hiddenMessageIds={hiddenTribalMessageIds}
+          revealingMessages={revealingTribalMessages}
+          displayRound={tribalDisplayRound}
+        />
+      ) : (
+        <ChatPanel
+          game={game}
+          selectedAi={selectedAi}
+          busy={busy}
+          pendingChats={pendingChats}
+          onSend={(message) => selectedAi && sendOptimisticChat(selectedAi.id, message)}
+        />
+      )}
       {game.status === "complete" ? (
         <div className="result">
           <strong>Game complete</strong>

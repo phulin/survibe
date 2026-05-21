@@ -241,14 +241,26 @@ export const addMessage = async (
   recipientPlayerId: string | null,
   content: string,
 ) => {
+  const id = crypto.randomUUID();
   const createdAt = nowIso();
 
   await db
     .prepare(
       "INSERT INTO messages (id, game_id, round, channel, sender_player_id, recipient_player_id, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(crypto.randomUUID(), gameId, round, channel, senderPlayerId, recipientPlayerId, content, createdAt)
+    .bind(id, gameId, round, channel, senderPlayerId, recipientPlayerId, content, createdAt)
     .run();
+
+  return {
+    id,
+    gameId,
+    round,
+    channel,
+    senderPlayerId,
+    recipientPlayerId,
+    content,
+    createdAt,
+  };
 };
 
 export const updateGameStatus = async (db: D1Database, gameId: string, status: GameStatus, round?: number) => {
