@@ -125,10 +125,11 @@ select {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100dvh;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 300px;
   gap: 16px;
+  overflow: hidden;
   padding: 16px;
 }
 
@@ -139,6 +140,8 @@ select {
 }
 
 .rail {
+  min-height: 0;
+  overflow: auto;
   padding: 14px;
 }
 
@@ -260,6 +263,8 @@ select {
 .chat-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 16px;
 }
 
@@ -269,7 +274,7 @@ select {
 }
 
 .messages {
-  min-height: 360px;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -455,6 +460,9 @@ select {
   }
 
   .app-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
     padding: 10px;
   }
 
