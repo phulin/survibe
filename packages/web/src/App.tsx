@@ -1,4 +1,4 @@
-import { Crown, MessageCircle, Send, Skull, Users, Vote } from "lucide-react";
+import { Clock, Crown, MessageCircle, Play, Send, Skull, Users, Vote } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { advanceToTribal, answerTribalCouncil, castVote, createGame, getGame, revealVotes, sendChat } from "./engine/client";
 import type { GameMessage, GameView, PlayerSummary } from "@survibe/shared";
@@ -36,6 +36,171 @@ type VoteTallyRow = {
   playerId: string;
   playerName: string;
   votes: number;
+};
+
+type RecentGame = {
+  id: string;
+  name: string;
+  status: GameView["status"];
+  round: number;
+  updatedAt: string;
+  activePlayers: number;
+};
+
+const recentGamesStorageKey = "survibe.recentGames.v1";
+const recentGameLimit = 8;
+
+const gameAdjectives = [
+  "Clever",
+  "Hidden",
+  "Lucky",
+  "Bold",
+  "Quiet",
+  "Golden",
+  "Steady",
+  "Wily",
+  "Swift",
+  "Sharp",
+  "Brave",
+  "Secret",
+  "Bright",
+  "Patient",
+  "Restless",
+  "Loyal",
+];
+
+const gameNouns = [
+  "Torch",
+  "Cove",
+  "Palm",
+  "Compass",
+  "Lagoon",
+  "Tide",
+  "Shelter",
+  "Flint",
+  "Beacon",
+  "Summit",
+  "Council",
+  "Drift",
+  "Reef",
+  "Signal",
+  "Harbor",
+  "Trail",
+];
+
+const hashText = (value: string) =>
+  [...value].reduce((hash, char) => {
+    return (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }, 17);
+
+const generatedGameName = (gameId: string, existingNames: Set<string>) => {
+  const baseHash = hashText(gameId);
+
+  for (let offset = 0; offset < gameAdjectives.length * gameNouns.length; offset += 1) {
+    const adjective = gameAdjectives[(baseHash + offset) % gameAdjectives.length];
+    const noun = gameNouns[(Math.floor(baseHash / gameAdjectives.length) + offset) % gameNouns.length];
+    const name = `${adjective} ${noun}`;
+
+    if (!existingNames.has(name)) {
+      return name;
+    }
+  }
+
+  return `Cast ${baseHash.toString(36).slice(0, 4).toUpperCase()}`;
+};
+
+const parseRecentGames = (value: string | null): RecentGame[] => {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+
+      const record = item as Record<string, unknown>;
+      if (
+        typeof record.id !== "string" ||
+        typeof record.name !== "string" ||
+        typeof record.status !== "string" ||
+        typeof record.round !== "number" ||
+        typeof record.updatedAt !== "string" ||
+        typeof record.activePlayers !== "number"
+      ) {
+        return [];
+      }
+
+      return [
+        {
+          id: record.id,
+          name: record.name,
+          status: record.status as RecentGame["status"],
+          round: record.round,
+          updatedAt: record.updatedAt,
+          activePlayers: record.activePlayers,
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+};
+
+const loadRecentGames = () => {
+  try {
+    return parseRecentGames(window.localStorage.getItem(recentGamesStorageKey));
+  } catch {
+    return [];
+  }
+};
+
+const saveRecentGames = (games: RecentGame[]) => {
+  try {
+    window.localStorage.setItem(recentGamesStorageKey, JSON.stringify(games));
+  } catch {
+    // Recent games are only a convenience; gameplay should continue if storage is unavailable.
+  }
+};
+
+const rememberGame = (game: GameView) => {
+  const current = loadRecentGames();
+  const existing = current.find((item) => item.id === game.id);
+  const existingNames = new Set(current.filter((item) => item.id !== game.id).map((item) => item.name));
+  const recentGame: RecentGame = {
+    id: game.id,
+    name: existing?.name ?? generatedGameName(game.id, existingNames),
+    status: game.status,
+    round: game.round,
+    updatedAt: game.updatedAt,
+    activePlayers: activePlayers(game).length,
+  };
+  const next = [recentGame, ...current.filter((item) => item.id !== game.id)]
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, recentGameLimit);
+
+  saveRecentGames(next);
+  return next;
+};
+
+const formatRecentDate = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Recently";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 };
 
 const gameIdFromPath = () => {
@@ -101,7 +266,17 @@ const votesCastForCurrentRound = (game: GameView) => {
   return typeof event.payload.totalVotes === "number" ? event.payload.totalVotes : activePlayers(game).length;
 };
 
-const Setup = ({ onCreate, busy }: { onCreate: (name: string, aiCount: number) => void; busy: boolean }) => {
+const Setup = ({
+  onCreate,
+  onResume,
+  busy,
+  recentGames,
+}: {
+  onCreate: (name: string, aiCount: number) => void;
+  onResume: (gameId: string) => void;
+  busy: boolean;
+  recentGames: RecentGame[];
+}) => {
   const [name, setName] = useState("Alex Vale");
   const [aiCount, setAiCount] = useState(6);
 
@@ -118,28 +293,57 @@ const Setup = ({ onCreate, busy }: { onCreate: (name: string, aiCount: number) =
           <h1>Survibe</h1>
           <p className="lede">One human enters a live social vote against a cast of persistent AI players.</p>
         </div>
-        <form className="setup-form" onSubmit={submit}>
-          <label>
-            Display name
-            <input id="display-name" name="display-name" value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label>
-            AI opponents
-            <input
-              id="ai-count"
-              name="ai-count"
-              type="number"
-              min={2}
-              max={8}
-              value={aiCount}
-              onChange={(event) => setAiCount(Number(event.target.value))}
-            />
-          </label>
-          <button className="primary" type="submit" disabled={busy}>
-            <Users size={18} />
-            Start game
-          </button>
-        </form>
+        <div className="setup-stack">
+          <form className="setup-form" onSubmit={submit}>
+            <label>
+              Display name
+              <input id="display-name" name="display-name" value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label>
+              AI opponents
+              <input
+                id="ai-count"
+                name="ai-count"
+                type="number"
+                min={2}
+                max={8}
+                value={aiCount}
+                onChange={(event) => setAiCount(Number(event.target.value))}
+              />
+            </label>
+            <button className="primary" type="submit" disabled={busy}>
+              <Users size={18} />
+              Start game
+            </button>
+          </form>
+          {recentGames.length > 0 ? (
+            <section className="recent-games" aria-labelledby="recent-games-title">
+              <div className="recent-header">
+                <div>
+                  <p className="eyebrow">Continue</p>
+                  <h2 id="recent-games-title">Recent games</h2>
+                </div>
+                <Clock size={20} />
+              </div>
+              <div className="recent-list">
+                {recentGames.map((recentGame) => (
+                  <button className="recent-game" key={recentGame.id} type="button" onClick={() => onResume(recentGame.id)} disabled={busy}>
+                    <span>
+                      <strong>{recentGame.name}</strong>
+                      <small>
+                        Round {recentGame.round} / {recentGame.status} / {recentGame.activePlayers} active
+                      </small>
+                    </span>
+                    <span className="recent-meta">
+                      <small>{formatRecentDate(recentGame.updatedAt)}</small>
+                      <Play size={16} />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
       </section>
     </main>
   );
@@ -411,6 +615,7 @@ const TribalPanel = ({
 
 export const App = () => {
   const [game, setGame] = useState<GameView | null>(null);
+  const [recentGames, setRecentGames] = useState<RecentGame[]>(() => loadRecentGames());
   const [selectedAiId, setSelectedAiId] = useState<string | null>(null);
   const [selectedVote, setSelectedVote] = useState("");
   const [pendingChats, setPendingChats] = useState<PendingChats>({});
@@ -420,6 +625,7 @@ export const App = () => {
 
   const applyServerGame = (loadedGame: GameView) => {
     setGame(loadedGame);
+    setRecentGames(rememberGame(loadedGame));
     setSelectedVote("");
     setSelectedAiId((current) => {
       if (current && loadedGame.players.some((player) => player.id === current && player.kind === "ai" && player.status === "active")) {
@@ -442,6 +648,7 @@ export const App = () => {
 
       if (!gameId) {
         setGame(null);
+        setRecentGames(loadRecentGames());
         setSelectedAiId(null);
         setSelectedVote("");
         setPendingChats({});
@@ -483,6 +690,20 @@ export const App = () => {
       await loadGameById(createdGame.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resumeGame = async (gameId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setGamePath(gameId);
+      await loadGameById(gameId);
+    } catch (err) {
+      setGamePath(null);
+      setError(err instanceof Error ? err.message : "Could not load game.");
     } finally {
       setBusy(false);
     }
@@ -531,7 +752,7 @@ export const App = () => {
   if (!game) {
     return (
       <>
-        <Setup busy={busy} onCreate={startGame} />
+        <Setup busy={busy} recentGames={recentGames} onCreate={startGame} onResume={resumeGame} />
         {error ? <div className="toast">{error}</div> : null}
       </>
     );

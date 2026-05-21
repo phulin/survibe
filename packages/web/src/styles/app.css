@@ -78,6 +78,7 @@ input:disabled {
 }
 
 .setup-form,
+.recent-games,
 .panel,
 .rail,
 .result {
@@ -91,6 +92,73 @@ input:disabled {
   gap: 14px;
   padding: 18px;
   border-radius: 8px;
+}
+
+.setup-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.recent-games {
+  display: grid;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recent-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.recent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.recent-game {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-radius: 7px;
+  padding: 10px;
+  background: #f8f7ef;
+  color: #17201d;
+  text-align: left;
+}
+
+.recent-game:hover,
+.recent-game:focus-visible {
+  outline: 2px solid #bf7c35;
+}
+
+.recent-game strong,
+.recent-game small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-game small {
+  color: #64706b;
+  font-size: 12px;
+}
+
+.recent-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #193d35;
 }
 
 label {
