@@ -1,5 +1,5 @@
-import type { ChatRequest, CreateGameRequest, VoteRequest } from "../src/shared/types";
-import { generateAiChat } from "./ai/openaiClient";
+import type { ChatRequest, CreateGameRequest, GameEvent, GameView, TribalAnswerRequest, VoteRequest } from "../src/shared/types";
+import { generateAiChat, generateAiTribalAnswer, generateAiVote } from "./ai/openaiClient";
 import { addEvent, addMessage, addVote, createGame, eliminatePlayer, getGame, updateGameStatus } from "./db/d1Store";
 import { activeAiPlayers, activeContestants, assertActiveTarget, findPlayer, getPlacement, shouldEndGame } from "./game/rules";
 
@@ -32,6 +32,8 @@ const notFound = () => json({ error: "Not found" }, { status: 404 });
 
 const badRequest = (message: string) => json({ error: message }, { status: 400 });
 
+const tribalQuestion = "The social game is over for tonight. The vote is about trust, threat level, and who can survive one more round.";
+
 const readJson = async <T>(request: Request): Promise<T> => {
   try {
     return (await request.json()) as T;
@@ -50,6 +52,79 @@ const matchRoute = (pathname: string, pattern: RegExp): RouteParams | null => {
   return match.groups;
 };
 
+const voteTallyForRound = (game: GameView, round: number) => {
+  const tally = new Map<string, number>();
+  const roundVotes = game.votes.filter((vote) => vote.round === round);
+
+  for (const vote of roundVotes) {
+    tally.set(vote.targetId, (tally.get(vote.targetId) ?? 0) + 1);
+  }
+
+  return game.players
+    .filter((player) => player.kind !== "host")
+    .map((player) => ({
+      playerId: player.id,
+      playerName: player.name,
+      votes: tally.get(player.id) ?? 0,
+    }))
+    .filter((row) => row.votes > 0 || roundVotes.some((vote) => vote.targetId === row.playerId))
+    .sort((a, b) => b.votes - a.votes || a.playerName.localeCompare(b.playerName));
+};
+
+const humanVisibleEvents = (game: GameView): GameEvent[] =>
+  game.events.map((event) => {
+    if (event.type === "player_eliminated" && !Array.isArray(event.payload.voteTally)) {
+      return {
+        ...event,
+        payload: {
+          ...event.payload,
+          voteTally: voteTallyForRound(game, event.round),
+          totalVotes: game.votes.filter((vote) => vote.round === event.round).length,
+        },
+      };
+    }
+
+    if (event.type === "votes_cast" && typeof event.payload.totalVotes !== "number") {
+      return {
+        ...event,
+        payload: {
+          ...event.payload,
+          totalVotes: game.votes.filter((vote) => vote.round === event.round).length,
+        },
+      };
+    }
+
+    return event;
+  });
+
+const humanVisibleGame = (game: GameView): GameView => ({
+  ...game,
+  players: game.players.map((player) => ({
+    ...player,
+    privateNotes: [],
+    profile: player.profile
+      ? {
+          ...player.profile,
+          riskTolerance: "medium",
+          loyalty: 0,
+          deception: 0,
+          threatSensitivity: 0,
+          memorySummary: "",
+        }
+      : null,
+  })),
+  messages: game.messages.filter(
+    (message) =>
+      message.channel !== "private" ||
+      message.senderPlayerId === game.humanPlayerId ||
+      message.recipientPlayerId === game.humanPlayerId,
+  ),
+  votes: [],
+  events: humanVisibleEvents(game),
+});
+
+const jsonGame = (game: GameView | null, init?: ResponseInit) => (game ? json(humanVisibleGame(game), init) : notFound());
+
 const chooseAiTarget = (voterId: string, candidates: string[], round: number) => {
   const seed = [...voterId].reduce((sum, char) => sum + char.charCodeAt(0), round);
   return candidates[seed % candidates.length];
@@ -62,10 +137,17 @@ const revealVotes = async (env: Env, gameId: string) => {
     return notFound();
   }
 
+  if (game.status !== "voting") {
+    return badRequest("Votes can only be revealed after voting.");
+  }
+
   const roundVotes = game.votes.filter((vote) => vote.round === game.round);
 
   if (roundVotes.length === 0) {
     return badRequest("No votes have been cast.");
+  }
+  if (roundVotes.length < activeContestants(game.players).length) {
+    return badRequest("Not every active player has voted.");
   }
 
   const tally = new Map<string, number>();
@@ -109,7 +191,7 @@ const revealVotes = async (env: Env, gameId: string) => {
     });
   }
 
-  return json(await getGame(env.DB, game.id));
+  return jsonGame(await getGame(env.DB, game.id));
 };
 
 const castAiVotes = async (env: Env, gameId: string) => {
@@ -128,8 +210,34 @@ const castAiVotes = async (env: Env, gameId: string) => {
       continue;
     }
 
-    const candidates = contestants.filter((player) => player.id !== ai.id).map((player) => player.id);
-    const targetId = chooseAiTarget(ai.id, candidates, game.round);
+    const candidates = contestants.filter((player) => player.id !== ai.id);
+    const fallbackTargetId = chooseAiTarget(
+      ai.id,
+      candidates.map((player) => player.id),
+      game.round,
+    );
+    let decision = {
+      targetId: fallbackTargetId,
+      rationale: "Best available target.",
+      confidence: 68,
+    };
+
+    try {
+      decision = await generateAiVote(env, game, ai, candidates);
+    } catch {
+      const fallbackTarget = findPlayer(game, fallbackTargetId);
+      decision = {
+        targetId: fallbackTargetId,
+        rationale: fallbackTarget ? `${fallbackTarget.name} is the most practical vote for me tonight.` : "Best available target.",
+        confidence: 60,
+      };
+    }
+
+    if (decision.targetId === ai.id || !candidates.some((candidate) => candidate.id === decision.targetId)) {
+      decision.targetId = fallbackTargetId;
+    }
+
+    const targetId = decision.targetId;
     const target = findPlayer(game, targetId);
 
     await addVote(
@@ -138,10 +246,53 @@ const castAiVotes = async (env: Env, gameId: string) => {
       game.round,
       ai.id,
       targetId,
-      target ? `${target.name} looks like the cleanest way through this vote.` : "Best available target.",
-      68,
+      decision.rationale || (target ? `${target.name} looks like the cleanest way through this vote.` : "Best available target."),
+      decision.confidence,
     );
   }
+};
+
+const addAiTribalAnswers = async (env: Env, gameId: string, question: string) => {
+  let game = await getGame(env.DB, gameId);
+
+  if (!game) {
+    return null;
+  }
+
+  for (const ai of activeAiPlayers(game.players)) {
+    const round = game.round;
+    const messages = game.messages;
+    const alreadyAnswered = messages.some(
+      (message) => message.round === round && message.channel === "tribal" && message.senderPlayerId === ai.id,
+    );
+    if (alreadyAnswered) {
+      continue;
+    }
+
+    let answer = "Tonight, I am weighing what people have said against what actually protects my game.";
+    try {
+      answer = await generateAiTribalAnswer(env, game, ai, question);
+    } catch {
+      const profile = ai.profile?.strategicStyle;
+      answer = profile ? `${profile}. Tonight, I need a vote that leaves me with room to keep playing.` : answer;
+    }
+    await addMessage(env.DB, game.id, game.round, "tribal", ai.id, null, answer);
+    game = await getGame(env.DB, gameId);
+
+    if (!game) {
+      return null;
+    }
+  }
+
+  if (!game) {
+    return null;
+  }
+
+  await addEvent(env.DB, game.id, game.round, "tribal_answers_completed", {
+    round: game.round,
+  });
+
+  return getGame(env.DB, gameId);
 };
 
 export default {
@@ -167,13 +318,13 @@ export default {
         const body = await readJson<CreateGameRequest>(request);
         const humanName = body.humanName?.trim() || "Castaway";
         const aiCount = Number.isFinite(body.aiCount) ? body.aiCount : 6;
-        return json(await createGame(env.DB, humanName, aiCount), { status: 201 });
+        return jsonGame(await createGame(env.DB, humanName, aiCount), { status: 201 });
       }
 
       const gameMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)$/);
       if (request.method === "GET" && gameMatch?.gameId) {
         const game = await getGame(env.DB, gameMatch.gameId);
-        return game ? json(game) : notFound();
+        return jsonGame(game);
       }
 
       const chatMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/chat\/(?<playerId>[^/]+)$/);
@@ -215,7 +366,7 @@ export default {
         const reply = await generateAiChat(env, gameForPrompt, ai, human.name, humanMessage);
         await addMessage(env.DB, game.id, game.round, "private", ai.id, human.id, reply);
 
-        return json(await getGame(env.DB, game.id));
+        return jsonGame(await getGame(env.DB, game.id));
       }
 
       const tribalMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/advance-to-tribal$/);
@@ -223,6 +374,9 @@ export default {
         const game = await getGame(env.DB, tribalMatch.gameId);
         if (!game) {
           return notFound();
+        }
+        if (game.status !== "camp") {
+          return badRequest("Can only advance to Tribal Council from camp.");
         }
 
         await updateGameStatus(env.DB, game.id, "tribal");
@@ -236,10 +390,44 @@ export default {
           "tribal",
           game.players.find((player) => player.kind === "host")?.id ?? null,
           null,
-          "The social game is over for tonight. The vote is about trust, threat level, and who can survive one more round.",
+          tribalQuestion,
         );
 
-        return json(await getGame(env.DB, game.id));
+        return jsonGame(await getGame(env.DB, game.id));
+      }
+
+      const tribalAnswerMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/tribal-answer$/);
+      if (request.method === "POST" && tribalAnswerMatch?.gameId) {
+        const game = await getGame(env.DB, tribalAnswerMatch.gameId);
+        if (!game) {
+          return notFound();
+        }
+        if (game.status !== "tribal") {
+          return badRequest("Can only answer during Tribal Council.");
+        }
+
+        const human = findPlayer(game, game.humanPlayerId);
+        if (!human || human.status !== "active") {
+          return badRequest("Only an active player can answer at Tribal Council.");
+        }
+
+        const alreadyAnswered = game.messages.some(
+          (message) => message.round === game.round && message.channel === "tribal" && message.senderPlayerId === human.id,
+        );
+        if (alreadyAnswered) {
+          return badRequest("You have already answered at this Tribal Council.");
+        }
+
+        const body = await readJson<TribalAnswerRequest>(request);
+        const answer = body.message?.trim();
+        if (!answer) {
+          return badRequest("Answer is required.");
+        }
+
+        await addMessage(env.DB, game.id, game.round, "tribal", human.id, null, answer);
+        const refreshed = await addAiTribalAnswers(env, game.id, tribalQuestion);
+
+        return jsonGame(refreshed);
       }
 
       const voteMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/vote$/);
@@ -248,16 +436,37 @@ export default {
         if (!game) {
           return notFound();
         }
+        if (game.status !== "tribal") {
+          return badRequest("Can only vote after Tribal Council answers.");
+        }
 
         const body = await readJson<VoteRequest>(request);
         const target = assertActiveTarget(game, body.targetId);
+        if (target.id === game.humanPlayerId) {
+          return badRequest("You cannot vote for yourself.");
+        }
 
-        await updateGameStatus(env.DB, game.id, "voting");
+        const humanAnswered = game.messages.some(
+          (message) => message.round === game.round && message.channel === "tribal" && message.senderPlayerId === game.humanPlayerId,
+        );
+        if (!humanAnswered) {
+          return badRequest("Answer at Tribal Council before voting.");
+        }
+
+        const alreadyVoted = game.votes.some((vote) => vote.round === game.round && vote.voterId === game.humanPlayerId);
+        if (alreadyVoted) {
+          return badRequest("You have already voted this round.");
+        }
+
         await addVote(env.DB, game.id, game.round, game.humanPlayerId, target.id, `Voted for ${target.name}.`, 100);
         await castAiVotes(env, game.id);
-        await addEvent(env.DB, game.id, game.round, "votes_cast", { round: game.round });
+        await updateGameStatus(env.DB, game.id, "voting");
+        await addEvent(env.DB, game.id, game.round, "votes_cast", {
+          round: game.round,
+          totalVotes: activeContestants(game.players).length,
+        });
 
-        return json(await getGame(env.DB, game.id));
+        return jsonGame(await getGame(env.DB, game.id));
       }
 
       const revealMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/reveal$/);

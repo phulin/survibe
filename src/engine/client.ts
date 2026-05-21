@@ -1,4 +1,4 @@
-import type { ChatRequest, CreateGameRequest, GameView, VoteRequest } from "../shared/types";
+import type { ChatRequest, CreateGameRequest, GameView, TribalAnswerRequest, VoteRequest } from "../shared/types";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
@@ -34,6 +34,12 @@ export const sendChat = (gameId: string, aiPlayerId: string, body: ChatRequest) 
 export const advanceToTribal = (gameId: string) =>
   request<GameView>(`/api/games/${gameId}/advance-to-tribal`, {
     method: "POST",
+  });
+
+export const answerTribalCouncil = (gameId: string, body: TribalAnswerRequest) =>
+  request<GameView>(`/api/games/${gameId}/tribal-answer`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 
 export const castVote = (gameId: string, body: VoteRequest) =>

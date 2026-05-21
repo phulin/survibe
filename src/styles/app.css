@@ -19,7 +19,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -101,13 +102,18 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid #c4cabf;
   border-radius: 6px;
   padding: 10px 12px;
   background: #fffef8;
   color: #17201d;
+}
+
+textarea {
+  resize: vertical;
 }
 
 .primary,
@@ -380,6 +386,11 @@ select {
 }
 
 .tribal-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.tribal-answer {
   display: grid;
   gap: 10px;
 }

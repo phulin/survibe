@@ -17,12 +17,40 @@ type ResponsesApiResponse = {
   };
 };
 
+export type VoteDecision = {
+  targetId: string;
+  rationale: string;
+  confidence: number;
+};
+
 const fallbackReply = (ai: PlayerSummary, humanMessage: string) => {
   const hook = humanMessage.toLowerCase().includes("vote")
     ? "Votes are where trust becomes real."
     : "I am listening, but I am also counting where everyone is standing.";
 
   return `${hook} For now, I can work with you if the plan keeps both of us off the bottom.`;
+};
+
+const fallbackTribalAnswer = (ai: PlayerSummary) => {
+  const profile = ai.profile;
+  const style = profile?.strategicStyle ?? "I am watching the numbers and the relationships";
+  return `${style}. Tonight is about making sure the vote matches what people have actually shown me, not just what they promised.`;
+};
+
+const fallbackVoteDecision = (ai: PlayerSummary, candidates: PlayerSummary[]): VoteDecision => {
+  const target =
+    [...candidates].sort(
+      (a, b) =>
+        (b.profile?.threatSensitivity ?? 50) - (a.profile?.threatSensitivity ?? 50) ||
+        (b.profile?.deception ?? 50) - (a.profile?.deception ?? 50) ||
+        a.name.localeCompare(b.name),
+    )[0] ?? candidates[0];
+
+  return {
+    targetId: target.id,
+    rationale: `${target.name} is the most dangerous option for my game right now.`,
+    confidence: 68,
+  };
 };
 
 const extractText = (payload: ResponsesApiResponse) => {
@@ -37,6 +65,24 @@ const extractText = (payload: ResponsesApiResponse) => {
     .trim();
 
   return text || null;
+};
+
+const extractJsonObject = (text: string) => {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  const source = fenced?.[1] ?? trimmed;
+  const start = source.indexOf("{");
+  const end = source.lastIndexOf("}");
+
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(source.slice(start, end + 1)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 };
 
 type ConversationTurn = {
@@ -198,6 +244,25 @@ const buildSystemPrompt = (ai: PlayerSummary) => {
     .join("\n");
 };
 
+const buildInput = (game: GameView, ai: PlayerSummary, task: string) => {
+  const systemPrompt = buildSystemPrompt(ai);
+  const contestantDossiers = buildContestantDossiers(game);
+  const conversation = buildAppendOnlyConversation(game, ai);
+
+  return [
+    { role: "system" as const, content: systemPrompt },
+    {
+      role: "user" as const,
+      content: `Contestant dossiers. These are all players; no contestant is identified as human or AI:\n${contestantDossiers}`,
+    },
+    ...conversation.map((turn) => ({ role: turn.role, content: turn.content })),
+    {
+      role: "user" as const,
+      content: task,
+    },
+  ];
+};
+
 const promptCacheKey = (gameId: string, aiId: string) => {
   const source = `${gameId}:${aiId}:chat`;
   let hash = 0;
@@ -222,21 +287,7 @@ export const generateAiChat = async (
     return fallbackReply(ai, humanMessage);
   }
 
-  const systemPrompt = buildSystemPrompt(ai);
-  const contestantDossiers = buildContestantDossiers(game);
-  const conversation = buildAppendOnlyConversation(game, ai);
-  const input = [
-    { role: "system", content: systemPrompt },
-    {
-      role: "user" as const,
-      content: `Contestant dossiers. These are all players; no contestant is identified as human or AI:\n${contestantDossiers}`,
-    },
-    ...conversation.map((turn) => ({ role: turn.role, content: turn.content })),
-    {
-      role: "user" as const,
-      content: `Current task: Reply privately to ${humanName}'s latest message as ${ai.name}.`,
-    },
-  ];
+  const input = buildInput(game, ai, `Current task: Reply privately to ${humanName}'s latest message as ${ai.name}.`);
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -260,4 +311,100 @@ export const generateAiChat = async (
   }
 
   return extractText(payload) ?? fallbackReply(ai, humanMessage);
+};
+
+export const generateAiTribalAnswer = async (env: OpenAiEnv, game: GameView, ai: PlayerSummary, question: string) => {
+  const apiKey = env.OPENAI_API_KEY;
+
+  if (!apiKey || apiKey === "replace-with-local-development-key") {
+    return fallbackTribalAnswer(ai);
+  }
+
+  const input = buildInput(
+    game,
+    ai,
+    `Current task: Answer Jeff Probst's public Tribal Council question as ${ai.name}.
+Question: ${question}
+This is public and every remaining contestant will hear it. Be concise, in character, and strategically careful.`,
+  );
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: env.OPENAI_MODEL ?? "gpt-5.4-mini",
+      input,
+      max_output_tokens: 180,
+      prompt_cache_key: promptCacheKey(game.id, ai.id),
+      prompt_cache_retention: "in_memory",
+    }),
+  });
+
+  const payload = (await response.json()) as ResponsesApiResponse;
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? "OpenAI request failed.");
+  }
+
+  return extractText(payload) ?? fallbackTribalAnswer(ai);
+};
+
+export const generateAiVote = async (env: OpenAiEnv, game: GameView, ai: PlayerSummary, candidates: PlayerSummary[]): Promise<VoteDecision> => {
+  const apiKey = env.OPENAI_API_KEY;
+
+  if (!apiKey || apiKey === "replace-with-local-development-key") {
+    return fallbackVoteDecision(ai, candidates);
+  }
+
+  const candidateNames = candidates.map((candidate) => candidate.name).join(", ");
+  const input = buildInput(
+    game,
+    ai,
+    `Current task: Cast your private vote as ${ai.name}.
+Eligible targets: ${candidateNames}
+Choose exactly one eligible target. Base the vote on your observed private conversations, public Tribal Council answers, revealed history, and strategy.
+Output only JSON with this shape: {"targetName":"Name","rationale":"short reason","confidence":0}`,
+  );
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: env.OPENAI_MODEL ?? "gpt-5.4-mini",
+      input,
+      max_output_tokens: 140,
+      prompt_cache_key: promptCacheKey(game.id, ai.id),
+      prompt_cache_retention: "in_memory",
+    }),
+  });
+
+  const payload = (await response.json()) as ResponsesApiResponse;
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? "OpenAI request failed.");
+  }
+
+  const parsed = extractJsonObject(extractText(payload) ?? "");
+  const targetName = typeof parsed?.targetName === "string" ? parsed.targetName.trim().toLowerCase() : "";
+  const target = candidates.find((candidate) => candidate.name.toLowerCase() === targetName);
+
+  if (!target) {
+    return fallbackVoteDecision(ai, candidates);
+  }
+
+  const confidenceValue = typeof parsed?.confidence === "number" ? parsed.confidence : Number(parsed?.confidence);
+  const confidence = Number.isFinite(confidenceValue) ? Math.max(0, Math.min(100, Math.round(confidenceValue))) : 68;
+  const rationale = typeof parsed?.rationale === "string" && parsed.rationale.trim() ? parsed.rationale.trim() : `${target.name} is best for my game.`;
+
+  return {
+    targetId: target.id,
+    rationale,
+    confidence,
+  };
 };

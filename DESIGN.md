@@ -80,7 +80,8 @@ These can be added later after the core social loop is playable and measurable.
   - Any active non-host player can be targeted in the MVP.
 
 - **Vote Reveal**
-  - Votes are revealed one by one.
+  - Aggregate vote counts are revealed.
+  - Individual ballots remain hidden from contestants.
   - Eliminated player receives a final line.
   - Round summary records votes, major events, and updated relationships.
 
@@ -234,7 +235,7 @@ The prompt should tell the model:
 - Keep responses concise enough for a chat UI.
 - Do not claim to perform actions outside the game interface.
 
-Every AI request should include the entire game history observed by that specific player as an actual ordered conversation, not as a rewritten summary block. Server events, Tribal Council messages, votes, eliminations, and other public observations are appended as `user` turns. Private conversations are scoped per participant: a private message appears only in the conversation log for the AI player who sent or received it. The current AI player's prior messages are appended as `assistant` turns. Do not summarize, drop, or rewrite earlier observed turns for the MVP; context exhaustion will be handled later if it becomes a real blocker.
+Every AI request should include the entire game history observed by that specific player as an actual ordered conversation, not as a rewritten summary block. Server events, Tribal Council messages, revealed aggregate vote counts, eliminations, and other public observations are appended as `user` turns. Individual ballots are stored server-side for adjudication and audit, but contestants do not observe who cast each vote. Private conversations are scoped per participant: a private message appears only in the conversation log for the AI player who sent or received it. The current AI player's prior messages are appended as `assistant` turns. Do not summarize, drop, or rewrite earlier observed turns for the MVP; context exhaustion will be handled later if it becomes a real blocker.
 
 Model-visible contestant dossiers should not identify which contestant is controlled by a human. The human player receives a normal name, archetype, biography, and playstyle just like AI contestants.
 
@@ -299,6 +300,8 @@ POST /api/games/:gameId/reveal
 ```
 
 The initial repository includes `wrangler.toml`, `worker/index.ts`, and a D1 migration. `wrangler.toml` binds the `survibe` D1 database as `env.DB`, declares `OPENAI_API_KEY` as a required secret, and points Wrangler at the Worker entrypoint.
+
+The Worker returns a human-visible game projection to the browser. That projection includes only public events, public Tribal Council messages, and private messages involving the human player. It strips raw vote records, non-human private conversations, private notes, and internal numeric personality traits. Full audit state remains in D1 and is only used server-side.
 
 ## 9. Persistence
 

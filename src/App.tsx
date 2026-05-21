@@ -1,6 +1,6 @@
 import { Crown, MessageCircle, Send, Skull, Users, Vote } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { advanceToTribal, castVote, createGame, getGame, revealVotes, sendChat } from "./engine/client";
+import { advanceToTribal, answerTribalCouncil, castVote, createGame, getGame, revealVotes, sendChat } from "./engine/client";
 import type { GameMessage, GameView, PlayerSummary } from "./shared/types";
 
 const playerName = (game: GameView | null, playerId: string | null) => {
@@ -87,30 +87,16 @@ const latestVoteTally = (game: GameView) => {
     };
   }
 
-  const roundVotes = game.votes.filter((vote) => vote.round === eliminated.round);
-  if (roundVotes.length === 0) {
+  return null;
+};
+
+const votesCastForCurrentRound = (game: GameView) => {
+  const event = game.events.filter((item) => item.type === "votes_cast" && item.round === game.round).at(-1);
+  if (!event) {
     return null;
   }
 
-  const counts = new Map<string, number>();
-  for (const vote of roundVotes) {
-    counts.set(vote.targetId, (counts.get(vote.targetId) ?? 0) + 1);
-  }
-
-  const eliminatedPlayerId = typeof eliminated.payload.playerId === "string" ? eliminated.payload.playerId : null;
-  const rows = game.players
-    .filter((player) => player.kind !== "host" && (player.status === "active" || player.id === eliminatedPlayerId || counts.has(player.id)))
-    .map((player) => ({
-      playerId: player.id,
-      playerName: player.name,
-      votes: counts.get(player.id) ?? 0,
-    }))
-    .sort((a, b) => b.votes - a.votes || a.playerName.localeCompare(b.playerName));
-
-  return {
-    round: eliminated.round,
-    rows,
-  };
+  return typeof event.payload.totalVotes === "number" ? event.payload.totalVotes : activePlayers(game).length;
 };
 
 const Setup = ({ onCreate, busy }: { onCreate: (name: string, aiCount: number) => void; busy: boolean }) => {
@@ -185,9 +171,6 @@ const Roster = ({ game, selectedId, onSelect }: { game: GameView; selectedId: st
                 <span>{player.profile.biography}</span>
                 <span>Speech: {player.profile.speechStyle}</span>
                 <span>Strategy: {player.profile.strategicStyle}</span>
-                <span>
-                  Loyalty {player.profile.loyalty} · Deception {player.profile.deception} · Threat sense {player.profile.threatSensitivity}
-                </span>
               </span>
             ) : null}
             {player.status === "eliminated" ? <Skull size={16} /> : null}
@@ -302,6 +285,7 @@ const TribalPanel = ({
   selectedVote,
   onSelectVote,
   onTribal,
+  onAnswer,
   onVote,
   onReveal,
   busy,
@@ -310,13 +294,30 @@ const TribalPanel = ({
   selectedVote: string;
   onSelectVote: (id: string) => void;
   onTribal: () => void;
+  onAnswer: (message: string) => void;
   onVote: () => void;
   onReveal: () => void;
   busy: boolean;
 }) => {
-  const currentVotes = game.votes.filter((vote) => vote.round === game.round);
+  const [tribalAnswer, setTribalAnswer] = useState("");
   const eliminated = game.events.filter((event) => event.type === "player_eliminated").at(-1);
   const revealedTally = latestVoteTally(game);
+  const currentVoteCount = votesCastForCurrentRound(game);
+  const humanAnswered = game.messages.some(
+    (message) => message.round === game.round && message.channel === "tribal" && message.senderPlayerId === game.humanPlayerId,
+  );
+  const canVote = game.status === "tribal" && humanAnswered;
+
+  const submitAnswer = (event: FormEvent) => {
+    event.preventDefault();
+    const message = tribalAnswer.trim();
+    if (!message) {
+      return;
+    }
+
+    onAnswer(message);
+    setTribalAnswer("");
+  };
 
   return (
     <aside className="rail council">
@@ -333,6 +334,24 @@ const TribalPanel = ({
           <Crown size={17} />
           Tribal
         </button>
+        {game.status === "tribal" && !humanAnswered ? (
+          <form className="tribal-answer" onSubmit={submitAnswer}>
+            <label>
+              Tribal answer
+              <textarea
+                id="tribal-answer"
+                name="tribal-answer"
+                value={tribalAnswer}
+                onChange={(event) => setTribalAnswer(event.target.value)}
+                disabled={busy}
+                rows={4}
+              />
+            </label>
+            <button type="submit" disabled={busy || !tribalAnswer.trim()}>
+              Answer
+            </button>
+          </form>
+        ) : null}
         <label>
           Vote target
           <select
@@ -340,7 +359,7 @@ const TribalPanel = ({
             name="vote-target"
             value={selectedVote}
             onChange={(event) => onSelectVote(event.target.value)}
-            disabled={busy || game.status === "complete"}
+            disabled={busy || !canVote}
           >
             <option value="">Choose</option>
             {activePlayers(game)
@@ -349,14 +368,14 @@ const TribalPanel = ({
                 <option value={player.id} key={player.id}>
                   {player.name}
                 </option>
-              ))}
+            ))}
           </select>
         </label>
-        <button type="button" onClick={onVote} disabled={busy || !selectedVote || game.status === "complete"}>
+        <button type="button" onClick={onVote} disabled={busy || !selectedVote || !canVote}>
           <Vote size={17} />
           Vote
         </button>
-        <button type="button" onClick={onReveal} disabled={busy || currentVotes.length === 0 || game.status === "complete"}>
+        <button type="button" onClick={onReveal} disabled={busy || game.status !== "voting"}>
           <Skull size={17} />
           Reveal
         </button>
@@ -368,7 +387,7 @@ const TribalPanel = ({
           .map((message) => (
             <p key={message.id}>{message.content}</p>
         ))}
-        {currentVotes.length > 0 ? <p>{currentVotes.length} votes cast this round.</p> : null}
+        {currentVoteCount !== null ? <p>{currentVoteCount} votes cast this round.</p> : null}
         {eliminated ? <p>Last eliminated: {String(eliminated.payload.playerName ?? "Unknown")}</p> : null}
         {revealedTally ? (
           <div className="vote-results">
@@ -512,6 +531,7 @@ export const App = () => {
         selectedVote={selectedVote}
         onSelectVote={setSelectedVote}
         onTribal={() => runServerAction(game.id, () => advanceToTribal(game.id))}
+        onAnswer={(message) => runServerAction(game.id, () => answerTribalCouncil(game.id, { message }))}
         onVote={() => runServerAction(game.id, () => castVote(game.id, { targetId: selectedVote }))}
         onReveal={() => runServerAction(game.id, () => revealVotes(game.id))}
         busy={busy}

@@ -80,6 +80,10 @@ export type ChatRequest = {
   message: string;
 };
 
+export type TribalAnswerRequest = {
+  message: string;
+};
+
 export type VoteRequest = {
   targetId: string;
 };
