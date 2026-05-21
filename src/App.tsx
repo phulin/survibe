@@ -23,6 +23,8 @@ const privateMessagesFor = (messages: GameMessage[], humanId: string, aiId: stri
         (message.senderPlayerId === aiId && message.recipientPlayerId === humanId)),
   );
 
+const chatBubbleContent = (content: string) => content.replace(/^Message (?:to|from) [^:]+:\s*/i, "");
+
 type PendingChat = {
   aiId: string;
   message: string;
@@ -250,7 +252,7 @@ const ChatPanel = ({
               {messages.map((message) => (
                 <div className={`bubble ${message.senderPlayerId === game.humanPlayerId ? "human" : "ai"}`} key={message.id}>
                   <strong>{playerName(game, message.senderPlayerId)}</strong>
-                  <p>{message.content}</p>
+                  <p>{chatBubbleContent(message.content)}</p>
                 </div>
               ))}
               {showPending ? (
