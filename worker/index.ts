@@ -183,17 +183,23 @@ export default {
         }
 
         await addMessage(env.DB, game.id, game.round, "private", human.id, ai.id, humanMessage);
-        const recentMessages = [...game.messages, {
-          id: "pending",
-          gameId: game.id,
-          round: game.round,
-          channel: "private" as const,
-          senderPlayerId: human.id,
-          recipientPlayerId: ai.id,
-          content: humanMessage,
-          createdAt: new Date().toISOString(),
-        }].filter((message) => message.channel === "private" && [human.id, ai.id].includes(message.senderPlayerId ?? ""));
-        const reply = await generateAiChat(env, ai, human.name, humanMessage, recentMessages);
+        const gameForPrompt = {
+          ...game,
+          messages: [
+            ...game.messages,
+            {
+              id: "pending",
+              gameId: game.id,
+              round: game.round,
+              channel: "private" as const,
+              senderPlayerId: human.id,
+              recipientPlayerId: ai.id,
+              content: humanMessage,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        };
+        const reply = await generateAiChat(env, gameForPrompt, ai, human.name, humanMessage);
         await addMessage(env.DB, game.id, game.round, "private", ai.id, human.id, reply);
 
         return json(await getGame(env.DB, game.id));

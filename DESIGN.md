@@ -219,7 +219,7 @@ Each AI player gets a stable system prompt assembled from:
 - Player identity.
 - Strategic style.
 - Relationship state.
-- Public game history.
+- Full append-only game history.
 - Private memory summary.
 - Current round context.
 - The immediate task.
@@ -233,6 +233,8 @@ The prompt should tell the model:
 - You may lie, deflect, withhold information, or make promises when useful.
 - Keep responses concise enough for a chat UI.
 - Do not claim to perform actions outside the game interface.
+
+Every AI request should include the entire game history available in D1, ordered from oldest to newest. This includes all private conversations, Tribal Council messages, votes, eliminations, and game events. Do not summarize, drop, or rewrite earlier turns for the MVP; context exhaustion will be handled later if it becomes a real blocker.
 
 ### Jeff Probst Prompt
 
@@ -279,6 +281,7 @@ Recommended architecture:
 - The Worker validates structured outputs before mutating D1 game state.
 - The Worker records request metadata needed for debugging, but does not log secrets or full hidden prompts.
 - The Worker ensures that all players' prompts in each step are append-only and use prompt caching where supported.
+- Prompt caching should be optimized by keeping stable instructions at the beginning of the request, appending new game history only at the end, and setting a short stable `prompt_cache_key` per game/player prompt stream.
 
 Suggested endpoints:
 
