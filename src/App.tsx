@@ -1,5 +1,5 @@
 import { Crown, MessageCircle, Send, Skull, Users, Vote } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { advanceToTribal, castVote, createGame, getGame, revealVotes, sendChat } from "./engine/client";
 import type { GameMessage, GameView, PlayerSummary } from "./shared/types";
 
@@ -209,8 +209,19 @@ const ChatPanel = ({
   onSend: (message: string) => void;
 }) => {
   const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const refocusAfterSend = useRef(false);
   const messages = selectedAi ? privateMessagesFor(game.messages, game.humanPlayerId, selectedAi.id) : [];
   const showPending = Boolean(selectedAi && pendingChat?.aiId === selectedAi.id);
+
+  useEffect(() => {
+    if (!refocusAfterSend.current || busy || !selectedAi || game.status === "complete") {
+      return;
+    }
+
+    inputRef.current?.focus();
+    refocusAfterSend.current = false;
+  }, [busy, game.status, selectedAi]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -218,6 +229,7 @@ const ChatPanel = ({
     if (!message) {
       return;
     }
+    refocusAfterSend.current = true;
     onSend(message);
     setDraft("");
   };
@@ -267,6 +279,7 @@ const ChatPanel = ({
       </div>
       <form className="composer" onSubmit={submit}>
         <input
+          ref={inputRef}
           disabled={!selectedAi || busy || game.status === "complete"}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
