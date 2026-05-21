@@ -107,6 +107,17 @@ const Roster = ({ game, selectedId, onSelect }: { game: GameView; selectedId: st
               <strong>{player.name}</strong>
               <small>{player.profile?.archetype ?? "Contestant"}</small>
             </span>
+            {player.profile ? (
+              <span className="player-card" role="tooltip">
+                <strong>{player.profile.archetype}</strong>
+                <span>{player.profile.biography}</span>
+                <span>Speech: {player.profile.speechStyle}</span>
+                <span>Strategy: {player.profile.strategicStyle}</span>
+                <span>
+                  Loyalty {player.profile.loyalty} · Deception {player.profile.deception} · Threat sense {player.profile.threatSensitivity}
+                </span>
+              </span>
+            ) : null}
             {player.status === "eliminated" ? <Skull size={16} /> : null}
           </button>
         ))}

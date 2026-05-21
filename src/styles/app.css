@@ -162,6 +162,7 @@ select {
 }
 
 .player {
+  position: relative;
   width: 100%;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) 18px;
@@ -172,6 +173,11 @@ select {
   background: #f8f7ef;
   color: #17201d;
   text-align: left;
+}
+
+.player:hover,
+.player:focus-visible {
+  z-index: 4;
 }
 
 .player.selected {
@@ -205,6 +211,50 @@ select {
 .player small {
   color: #64706b;
   font-size: 12px;
+}
+
+.player-card {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  z-index: 20;
+  width: min(330px, 72vw);
+  display: grid;
+  gap: 7px;
+  border: 1px solid rgba(31, 49, 43, 0.16);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fffdf3;
+  color: #17201d;
+  box-shadow: 0 20px 48px rgba(25, 35, 29, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(8px, -50%);
+  visibility: hidden;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    visibility 140ms ease;
+}
+
+.player-card strong {
+  color: #193d35;
+  font-size: 13px;
+  white-space: normal;
+}
+
+.player-card span {
+  color: #43504b;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.player:hover .player-card,
+.player:focus-visible .player-card {
+  opacity: 1;
+  transform: translate(0, -50%);
+  visibility: visible;
 }
 
 .chat-panel {
@@ -371,5 +421,18 @@ select {
 
   .app-shell {
     padding: 10px;
+  }
+
+  .player-card {
+    left: 10px;
+    right: 10px;
+    top: calc(100% + 8px);
+    width: auto;
+    transform: translateY(8px);
+  }
+
+  .player:hover .player-card,
+  .player:focus-visible .player-card {
+    transform: translateY(0);
   }
 }
