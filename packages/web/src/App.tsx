@@ -30,6 +30,8 @@ type PendingChat = {
   message: string;
 };
 
+type PendingChats = Record<string, PendingChat>;
+
 type VoteTallyRow = {
   playerId: string;
   playerName: string;
@@ -184,29 +186,31 @@ const ChatPanel = ({
   game,
   selectedAi,
   busy,
-  pendingChat,
+  pendingChats,
   onSend,
 }: {
   game: GameView;
   selectedAi: PlayerSummary | null;
   busy: boolean;
-  pendingChat: PendingChat | null;
+  pendingChats: PendingChats;
   onSend: (message: string) => void;
 }) => {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const refocusAfterSend = useRef(false);
   const messages = selectedAi ? privateMessagesFor(game.messages, game.humanPlayerId, selectedAi.id) : [];
-  const showPending = Boolean(selectedAi && pendingChat?.aiId === selectedAi.id);
+  const pendingChat = selectedAi ? pendingChats[selectedAi.id] : null;
+  const showPending = Boolean(pendingChat);
+  const selectedChatBusy = Boolean(pendingChat);
 
   useEffect(() => {
-    if (!refocusAfterSend.current || busy || !selectedAi || game.status !== "camp") {
+    if (!refocusAfterSend.current || busy || selectedChatBusy || !selectedAi || game.status !== "camp") {
       return;
     }
 
     inputRef.current?.focus();
     refocusAfterSend.current = false;
-  }, [busy, game.status, selectedAi]);
+  }, [busy, game.status, selectedAi, selectedChatBusy]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -265,14 +269,14 @@ const ChatPanel = ({
       <form className="composer" onSubmit={submit}>
         <input
           ref={inputRef}
-          disabled={!selectedAi || busy || game.status !== "camp"}
+          disabled={!selectedAi || busy || selectedChatBusy || game.status !== "camp"}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder={selectedAi ? `Message ${selectedAi.name}` : "Select an AI first"}
           id="chat-message"
           name="chat-message"
         />
-        <button type="submit" disabled={!selectedAi || busy || game.status !== "camp" || !draft.trim()}>
+        <button type="submit" disabled={!selectedAi || busy || selectedChatBusy || game.status !== "camp" || !draft.trim()}>
           <Send size={18} />
         </button>
       </form>
@@ -409,9 +413,10 @@ export const App = () => {
   const [game, setGame] = useState<GameView | null>(null);
   const [selectedAiId, setSelectedAiId] = useState<string | null>(null);
   const [selectedVote, setSelectedVote] = useState("");
-  const [pendingChat, setPendingChat] = useState<PendingChat | null>(null);
+  const [pendingChats, setPendingChats] = useState<PendingChats>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasPendingChats = Object.keys(pendingChats).length > 0;
 
   const applyServerGame = (loadedGame: GameView) => {
     setGame(loadedGame);
@@ -439,6 +444,7 @@ export const App = () => {
         setGame(null);
         setSelectedAiId(null);
         setSelectedVote("");
+        setPendingChats({});
         return;
       }
 
@@ -448,6 +454,7 @@ export const App = () => {
         .catch((err) => {
           setGame(null);
           setSelectedAiId(null);
+          setPendingChats({});
           setError(err instanceof Error ? err.message : "Could not load game.");
         })
         .finally(() => setBusy(false));
@@ -495,15 +502,29 @@ export const App = () => {
   };
 
   const sendOptimisticChat = async (aiId: string, message: string) => {
-    if (!game) {
+    if (!game || pendingChats[aiId]) {
       return;
     }
 
+    const gameId = game.id;
+    setPendingChats((current) => {
+      if (current[aiId]) {
+        return current;
+      }
+
+      return { ...current, [aiId]: { aiId, message } };
+    });
+    setError(null);
     try {
-      setPendingChat({ aiId, message });
-      await runServerAction(game.id, () => sendChat(game.id, aiId, { message }));
+      await sendChat(gameId, aiId, { message });
+      await loadGameById(gameId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed.");
     } finally {
-      setPendingChat(null);
+      setPendingChats((current) => {
+        const { [aiId]: _removed, ...remaining } = current;
+        return remaining;
+      });
     }
   };
 
@@ -523,7 +544,7 @@ export const App = () => {
         game={game}
         selectedAi={selectedAi}
         busy={busy}
-        pendingChat={pendingChat}
+        pendingChats={pendingChats}
         onSend={(message) => selectedAi && sendOptimisticChat(selectedAi.id, message)}
       />
       <TribalPanel
@@ -534,7 +555,7 @@ export const App = () => {
         onAnswer={(message) => runServerAction(game.id, () => answerTribalCouncil(game.id, { message }))}
         onVote={() => runServerAction(game.id, () => castVote(game.id, { targetId: selectedVote }))}
         onReveal={() => runServerAction(game.id, () => revealVotes(game.id))}
-        busy={busy}
+        busy={busy || hasPendingChats}
       />
       {game.status === "complete" ? (
         <div className="result">
