@@ -36,9 +36,11 @@ const badRequest = (message: string) => json({ error: message }, { status: 400 }
 const tribalQuestion = "The social game is over for tonight. The vote is about trust, threat level, and who can survive one more round.";
 const maxAiPrivateTurnsPerRequest = 8;
 const maxAiPrivateToolDepth = 2;
+const maxAgentTurnAttempts = 3;
 const userQueueKey = "agent-turns:user";
 const agentQueueKey = "agent-turns:agent";
 const processedJobsKey = "agent-turns:processed";
+const failedJobsKey = "agent-turns:failed";
 
 const readJson = async <T>(request: Request): Promise<T> => {
   try {
@@ -280,6 +282,8 @@ type AgentTurnJob = {
   depth: number;
   priority: "user" | "agent";
   createdAt: string;
+  attempts: number;
+  lastError?: string;
 };
 
 type ClaimedAgentTurnJob = {
@@ -350,6 +354,7 @@ export class GameCoordinator {
         depth: 0,
         priority: "user",
         createdAt: message.createdAt,
+        attempts: 0,
       },
       userQueueKey,
     );
@@ -397,10 +402,13 @@ export class GameCoordinator {
       try {
         await this.processAgentTurn(claimed.job);
         await this.markJobProcessed(claimed.job.id);
-      } catch {
-        await this.requeueJob(claimed.job, claimed.queueKey);
-        await this.state.storage.setAlarm(Date.now() + 5_000);
-        break;
+      } catch (error) {
+        const retryDelayMs = await this.handleJobFailure(claimed.job, claimed.queueKey, error);
+        if (retryDelayMs) {
+          await this.state.storage.setAlarm(Date.now() + retryDelayMs);
+        }
+        processed += 1;
+        continue;
       }
 
       processed += 1;
@@ -439,6 +447,22 @@ export class GameCoordinator {
     if (!queue.some((item) => item.id === job.id)) {
       await this.state.storage.put(queueKey, [job, ...queue]);
     }
+  }
+
+  private async handleJobFailure(job: AgentTurnJob, queueKey: string, error: unknown) {
+    const failedJob = {
+      ...job,
+      attempts: job.attempts + 1,
+      lastError: error instanceof Error ? error.message : "Unexpected agent turn failure.",
+    };
+
+    if (failedJob.attempts >= maxAgentTurnAttempts) {
+      await this.markJobFailed(failedJob);
+      return 0;
+    }
+
+    await this.requeueJob(failedJob, queueKey);
+    return Math.min(60_000, 5_000 * 2 ** (failedJob.attempts - 1));
   }
 
   private async processAgentTurn(job: AgentTurnJob) {
@@ -500,6 +524,7 @@ export class GameCoordinator {
           depth: job.depth + 1,
           priority: "agent",
           createdAt: replyMessage.createdAt,
+          attempts: 0,
         },
         agentQueueKey,
       );
@@ -533,6 +558,7 @@ export class GameCoordinator {
             depth: job.depth + 1,
             priority: "agent",
             createdAt: toolMessage.createdAt,
+            attempts: 0,
           },
           agentQueueKey,
         );
@@ -556,6 +582,12 @@ export class GameCoordinator {
   private async markJobProcessed(jobId: string) {
     const processed = (await this.state.storage.get<string[]>(processedJobsKey)) ?? [];
     await this.state.storage.put(processedJobsKey, [...processed.filter((id) => id !== jobId), jobId].slice(-500));
+  }
+
+  private async markJobFailed(job: AgentTurnJob) {
+    const failed = (await this.state.storage.get<AgentTurnJob[]>(failedJobsKey)) ?? [];
+    await this.state.storage.put(failedJobsKey, [...failed.filter((item) => item.id !== job.id), job].slice(-100));
+    await this.markJobProcessed(job.id);
   }
 }
 
