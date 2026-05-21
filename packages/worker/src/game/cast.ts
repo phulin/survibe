@@ -1,4 +1,4 @@
-import type { AiProfile } from "../../src/shared/types";
+import type { AiProfile } from "@survibe/shared";
 
 export type CastProfile = AiProfile & {
   name: string;

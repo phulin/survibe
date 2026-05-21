@@ -1,0 +1,30 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "@survibe/worker#build": {
+      "dependsOn": ["@survibe/web#build", "^build"],
+      "outputs": ["dist/**"]
+    },
+    "@survibe/shared#build": {
+      "dependsOn": [],
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "deploy": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "outputs": []
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import { Crown, MessageCircle, Send, Skull, Users, Vote } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { advanceToTribal, answerTribalCouncil, castVote, createGame, getGame, revealVotes, sendChat } from "./engine/client";
-import type { GameMessage, GameView, PlayerSummary } from "./shared/types";
+import type { GameMessage, GameView, PlayerSummary } from "@survibe/shared";
 
 const playerName = (game: GameView | null, playerId: string | null) => {
   if (!game || !playerId) {

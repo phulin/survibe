@@ -9,7 +9,7 @@ import type {
   PlayerStatus,
   PlayerSummary,
   VoteRecord,
-} from "../../src/shared/types";
+} from "@survibe/shared";
 import { selectCast } from "../game/cast";
 
 type GameRow = {

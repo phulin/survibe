@@ -3,32 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "npm@11.11.0",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc --project tsconfig.worker.json --noEmit",
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy",
-    "worker:dev": "wrangler dev",
-    "worker:deploy": "wrangler deploy",
-    "db:create": "wrangler d1 create survibe",
-    "db:migrate:local": "wrangler d1 migrations apply survibe --local",
-    "db:migrate:remote": "wrangler d1 migrations apply survibe --remote",
-    "cf:secret:openai": "wrangler secret put OPENAI_API_KEY"
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "preview": "npm --workspace @survibe/web run preview",
+    "deploy": "npm run build && npm --workspace @survibe/worker run deploy",
+    "worker:dev": "npm --workspace @survibe/worker run dev",
+    "worker:deploy": "npm --workspace @survibe/worker run deploy",
+    "db:create": "npm --workspace @survibe/worker run db:create",
+    "db:migrate:local": "npm --workspace @survibe/worker run db:migrate:local",
+    "db:migrate:remote": "npm --workspace @survibe/worker run db:migrate:remote",
+    "cf:secret:openai": "npm --workspace @survibe/worker run cf:secret:openai"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.0.0",
-    "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.2",
-    "typescript": "^5.8.3",
-    "vite": "^8.0.14",
-    "wrangler": "^4.0.0"
-  },
-  "dependencies": {
-    "lucide-react": "^1.16.0",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "turbo": "^2.9.14"
   }
 }

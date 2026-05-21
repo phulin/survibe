@@ -8,6 +8,7 @@ node_modules/
 dist/
 .vite/
 .wrangler/
+.turbo/
 .npm/
 
 .DS_Store

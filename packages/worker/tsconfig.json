@@ -8,5 +8,5 @@
     "types": ["@cloudflare/workers-types"],
     "noEmit": true
   },
-  "include": ["worker/**/*.ts", "src/shared/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

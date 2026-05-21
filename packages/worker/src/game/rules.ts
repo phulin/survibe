@@ -1,4 +1,4 @@
-import type { GameView, PlayerSummary } from "../../src/shared/types";
+import type { GameView, PlayerSummary } from "@survibe/shared";
 
 export const activeContestants = (players: PlayerSummary[]) =>
   players.filter((player) => player.kind !== "host" && player.status === "active");

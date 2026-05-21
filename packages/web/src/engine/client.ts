@@ -1,4 +1,4 @@
-import type { ChatRequest, CreateGameRequest, GameView, TribalAnswerRequest, VoteRequest } from "../shared/types";
+import type { ChatRequest, CreateGameRequest, GameView, TribalAnswerRequest, VoteRequest } from "@survibe/shared";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {

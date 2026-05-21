@@ -1,4 +1,4 @@
-import type { GameEvent, GameMessage, GameView, PlayerSummary } from "../../src/shared/types";
+import type { GameEvent, GameMessage, GameView, PlayerSummary } from "@survibe/shared";
 
 export type OpenAiEnv = {
   OPENAI_API_KEY?: string;

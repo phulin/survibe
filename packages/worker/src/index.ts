@@ -1,4 +1,4 @@
-import type { ChatRequest, CreateGameRequest, GameEvent, GameView, TribalAnswerRequest, VoteRequest } from "../src/shared/types";
+import type { ChatRequest, CreateGameRequest, GameEvent, GameView, TribalAnswerRequest, VoteRequest } from "@survibe/shared";
 import { generateAiPrivateTurn, generateAiTribalAnswer, generateAiVote } from "./ai/openaiClient";
 import { addEvent, addMessage, addVote, createGame, eliminatePlayer, getGame, updateGameStatus } from "./db/d1Store";
 import { activeAiPlayers, activeContestants, assertActiveTarget, findPlayer, getPlacement, shouldEndGame } from "./game/rules";
