@@ -200,7 +200,7 @@ const ChatPanel = ({
   const showPending = Boolean(selectedAi && pendingChat?.aiId === selectedAi.id);
 
   useEffect(() => {
-    if (!refocusAfterSend.current || busy || !selectedAi || game.status === "complete") {
+    if (!refocusAfterSend.current || busy || !selectedAi || game.status !== "camp") {
       return;
     }
 
@@ -265,14 +265,14 @@ const ChatPanel = ({
       <form className="composer" onSubmit={submit}>
         <input
           ref={inputRef}
-          disabled={!selectedAi || busy || game.status === "complete"}
+          disabled={!selectedAi || busy || game.status !== "camp"}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder={selectedAi ? `Message ${selectedAi.name}` : "Select an AI first"}
           id="chat-message"
           name="chat-message"
         />
-        <button type="submit" disabled={!selectedAi || busy || !draft.trim()}>
+        <button type="submit" disabled={!selectedAi || busy || game.status !== "camp" || !draft.trim()}>
           <Send size={18} />
         </button>
       </form>

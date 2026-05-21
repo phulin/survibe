@@ -1,5 +1,5 @@
 import type { ChatRequest, CreateGameRequest, GameEvent, GameView, TribalAnswerRequest, VoteRequest } from "../src/shared/types";
-import { generateAiChat, generateAiTribalAnswer, generateAiVote } from "./ai/openaiClient";
+import { generateAiPrivateTurn, generateAiTribalAnswer, generateAiVote } from "./ai/openaiClient";
 import { addEvent, addMessage, addVote, createGame, eliminatePlayer, getGame, updateGameStatus } from "./db/d1Store";
 import { activeAiPlayers, activeContestants, assertActiveTarget, findPlayer, getPlacement, shouldEndGame } from "./game/rules";
 
@@ -33,6 +33,8 @@ const notFound = () => json({ error: "Not found" }, { status: 404 });
 const badRequest = (message: string) => json({ error: message }, { status: 400 });
 
 const tribalQuestion = "The social game is over for tonight. The vote is about trust, threat level, and who can survive one more round.";
+const maxAiPrivateTurnsPerRequest = 8;
+const maxAiPrivateToolDepth = 2;
 
 const readJson = async <T>(request: Request): Promise<T> => {
   try {
@@ -252,6 +254,90 @@ const castAiVotes = async (env: Env, gameId: string) => {
   }
 };
 
+type PendingAiPrivateMessage = {
+  senderId: string;
+  recipientId: string;
+  content: string;
+  depth: number;
+};
+
+const processAiPrivateTurns = async (env: Env, gameId: string, initialMessages: PendingAiPrivateMessage[]) => {
+  const queue = [...initialMessages];
+  let processed = 0;
+
+  while (queue.length > 0 && processed < maxAiPrivateTurnsPerRequest) {
+    const incoming = queue.shift()!;
+    const game = await getGame(env.DB, gameId);
+
+    if (!game || game.status !== "camp") {
+      break;
+    }
+
+    const ai = findPlayer(game, incoming.recipientId);
+    const sender = findPlayer(game, incoming.senderId);
+
+    if (!ai || ai.kind !== "ai" || ai.status !== "active" || !sender || sender.kind === "host" || sender.status !== "active") {
+      continue;
+    }
+
+    const messageCandidates = activeContestants(game.players).filter(
+      (player) => player.id !== ai.id && player.id !== sender.id && player.status === "active",
+    );
+
+    let turn;
+    try {
+      turn = await generateAiPrivateTurn(env, game, ai, sender, incoming.content, messageCandidates);
+    } catch {
+      turn = {
+        reply: "I hear you. I need to compare that with what everyone else is saying before I lock anything in.",
+        toolCalls: [],
+      };
+    }
+
+    await addMessage(env.DB, game.id, game.round, "private", ai.id, sender.id, turn.reply);
+    processed += 1;
+
+    if (incoming.depth >= maxAiPrivateToolDepth) {
+      continue;
+    }
+
+    if (sender.kind === "ai") {
+      queue.push({
+        senderId: ai.id,
+        recipientId: sender.id,
+        content: turn.reply,
+        depth: incoming.depth + 1,
+      });
+    }
+
+    const refreshed = await getGame(env.DB, gameId);
+    if (!refreshed || refreshed.status !== "camp") {
+      break;
+    }
+
+    const latestCandidates = activeContestants(refreshed.players).filter(
+      (player) => player.id !== ai.id && player.id !== sender.id && player.status === "active",
+    );
+
+    for (const toolCall of turn.toolCalls) {
+      const recipient = latestCandidates.find((player) => player.name.toLowerCase() === toolCall.recipientName.toLowerCase());
+      if (!recipient) {
+        continue;
+      }
+
+      await addMessage(env.DB, refreshed.id, refreshed.round, "private", ai.id, recipient.id, toolCall.message);
+      if (recipient.kind === "ai") {
+        queue.push({
+          senderId: ai.id,
+          recipientId: recipient.id,
+          content: toolCall.message,
+          depth: incoming.depth + 1,
+        });
+      }
+    }
+  }
+};
+
 const addAiTribalAnswers = async (env: Env, gameId: string, question: string) => {
   let game = await getGame(env.DB, gameId);
 
@@ -333,6 +419,9 @@ export default {
         if (!game) {
           return notFound();
         }
+        if (game.status !== "camp") {
+          return badRequest("Private messages can only be sent at camp.");
+        }
 
         const ai = findPlayer(game, chatMatch.playerId);
         const human = findPlayer(game, game.humanPlayerId);
@@ -347,24 +436,14 @@ export default {
         }
 
         await addMessage(env.DB, game.id, game.round, "private", human.id, ai.id, humanMessage);
-        const gameForPrompt = {
-          ...game,
-          messages: [
-            ...game.messages,
-            {
-              id: "pending",
-              gameId: game.id,
-              round: game.round,
-              channel: "private" as const,
-              senderPlayerId: human.id,
-              recipientPlayerId: ai.id,
-              content: humanMessage,
-              createdAt: new Date().toISOString(),
-            },
-          ],
-        };
-        const reply = await generateAiChat(env, gameForPrompt, ai, human.name, humanMessage);
-        await addMessage(env.DB, game.id, game.round, "private", ai.id, human.id, reply);
+        await processAiPrivateTurns(env, game.id, [
+          {
+            senderId: human.id,
+            recipientId: ai.id,
+            content: humanMessage,
+            depth: 0,
+          },
+        ]);
 
         return jsonGame(await getGame(env.DB, game.id));
       }
