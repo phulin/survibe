@@ -440,6 +440,12 @@ const parseDebugContent = (content: string) => {
 
 const asDebugText = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
 
+const formatDebugKey = (key: string) =>
+  key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
 const debugTypeName = (type: string | null) => {
   switch (type) {
     case "contestant_dossiers":
@@ -484,7 +490,14 @@ const debugMessageLabel = (message: AiDebugContextMessage) => {
 
   try {
     const parsed = JSON.parse(message.content) as Record<string, unknown>;
-    const type = debugTypeName(asDebugText(parsed.type));
+    const rawType = asDebugText(parsed.type);
+
+    if (rawType === "game_event") {
+      const eventType = asDebugText(parsed.eventType);
+      return eventType ? formatDebugKey(eventType) : "Game Event";
+    }
+
+    const type = debugTypeName(rawType);
 
     return `${debugSpeakerName(message.role)} ${type}`;
   } catch {
@@ -492,16 +505,36 @@ const debugMessageLabel = (message: AiDebugContextMessage) => {
   }
 };
 
-const debugMessageDetail = (message: AiDebugContextMessage, index: number) => {
+const debugMessageDetail = (message: AiDebugContextMessage) => {
   if (message.role === "system") {
     return "Identity, game rules, protocol, and private memory.";
   }
 
   try {
     const parsed = JSON.parse(message.content) as Record<string, unknown>;
+    const rawType = asDebugText(parsed.type);
     const sender = asDebugText(parsed.senderName);
     const recipient = asDebugText(parsed.recipientName);
-    const eventType = asDebugText(parsed.eventType);
+    const summary = asDebugText(parsed.summary);
+
+    if (rawType === "game_event") {
+      const payload = parsed.payload && typeof parsed.payload === "object" ? (parsed.payload as Record<string, unknown>) : {};
+
+      if (parsed.eventType === "player_eliminated") {
+        return asDebugText(payload.playerName);
+      }
+
+      if (parsed.eventType === "round_started") {
+        const round = typeof parsed.round === "number" ? parsed.round : null;
+        return round ? `Round ${round}` : null;
+      }
+
+      if (parsed.eventType === "tribal_answers_completed") {
+        return null;
+      }
+
+      return summary;
+    }
 
     if (sender && recipient) {
       return `${sender} -> ${recipient}`;
@@ -511,21 +544,11 @@ const debugMessageDetail = (message: AiDebugContextMessage, index: number) => {
       return sender;
     }
 
-    if (eventType) {
-      return eventType;
-    }
-
-    return `Message ${index + 1}`;
+    return null;
   } catch {
-    return `Message ${index + 1}`;
+    return null;
   }
 };
-
-const formatDebugKey = (key: string) =>
-  key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
 
 const hiddenDebugBodyKeys = new Set(["type", "round", "senderName", "recipientName"]);
 
@@ -608,17 +631,21 @@ const DebugContextPanel = ({ context }: { context: AiDebugContext | null }) => (
           <span>{context.observedPrivateMessageCount} private observed</span>
         </div>
         <div className="debug-messages">
-          {context.promptMessages.map((message, index) => (
-            <details className={`debug-message ${message.role}`} key={`${message.sourceMessageId ?? message.role}-${index}`}>
-              <summary>
-                <span className="debug-type">{debugMessageLabel(message)}</span>
-                <span>{debugMessageDetail(message, index)}</span>
-              </summary>
-              <div className="debug-message-body">
-                <DebugMessageBody content={message.content} />
-              </div>
-            </details>
-          ))}
+          {context.promptMessages.map((message, index) => {
+            const detail = debugMessageDetail(message);
+
+            return (
+              <details className={`debug-message ${message.role}`} key={`${message.sourceMessageId ?? message.role}-${index}`}>
+                <summary>
+                  <span className="debug-type">{debugMessageLabel(message)}</span>
+                  {detail ? <span>{detail}</span> : null}
+                </summary>
+                <div className="debug-message-body">
+                  <DebugMessageBody content={message.content} />
+                </div>
+              </details>
+            );
+          })}
         </div>
       </>
     ) : (

@@ -211,14 +211,14 @@ const typedMessage = (type: AiMessageType, value: Record<string, unknown>) => ({
 
 const messageSchemaCatalog = [
   "JSON message category schema:",
-  'contestant_dossiers: {"type":"contestant_dossiers","note":string,"contestants":[{"name":string,"status":"active"|"eliminated","publicFacts":string[],"archetype":string|null,"strategicStyle":string|null}]}',
+  'contestant_dossiers: {"type":"contestant_dossiers","contestants":[{"name":string,"status":"active"|"eliminated","publicFacts":string[],"archetype":string|null,"strategicStyle":string|null}]}',
   'current_task: {"type":"current_task","task":string}',
-  'game_event: {"type":"game_event","round":number,"eventType":string,"summary":string,"payload":object}',
-  'private_message: {"type":"private_message","round"?:number,"senderName"?:string,"recipientName"?:string|null,"visibility"?:string,"message":string}',
+  'game_event: {"type":"game_event","eventType":string,"payload":object}; round_started also includes "round":number',
+  'private_message: {"type":"private_message","senderName"?:string,"recipientName"?:string|null,"message":string}',
   'response: {"type":"response","response":string,"privateMessages":[{"type":"private_message","recipientName":string,"message":string}]}',
   'no_response: {"type":"no_response","response":"","privateMessages":[]}',
-  'tribal_question: {"type":"tribal_question","question":string} or historical {"type":"tribal_question","round":number,"senderName":string,"recipientName":null,"message":string}',
-  'tribal_answer: {"type":"tribal_answer","answer":string} or historical {"type":"tribal_answer","round":number,"senderName":string,"recipientName":null,"message":string}',
+  'tribal_question: {"type":"tribal_question","question":string} or historical {"type":"tribal_question","senderName":string,"recipientName":null,"message":string}',
+  'tribal_answer: {"type":"tribal_answer","answer":string} or historical {"type":"tribal_answer","senderName":string,"recipientName":null,"message":string}',
   'vote: {"type":"vote","targetName":string,"rationale":string,"confidence":number}',
 ].join("\n");
 
@@ -252,7 +252,6 @@ const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, 
       role: "assistant",
       content: jsonContent(
         typedMessage(assistantType, {
-          round: message.round,
           senderName: sender,
           recipientName: message.recipientPlayerId ? recipient : null,
           message: message.content,
@@ -277,10 +276,8 @@ const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, 
     role: "user",
     content: jsonContent(
       typedMessage(userType, {
-        round: message.round,
         senderName: sender,
         recipientName: message.recipientPlayerId ? recipient : null,
-        visibility: message.channel,
         message: message.content,
       }),
     ),
@@ -288,82 +285,85 @@ const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, 
   };
 };
 
-const formatVoteTally = (payload: Record<string, unknown>) => {
+const voteTallyMap = (payload: Record<string, unknown>) => {
   if (!Array.isArray(payload.voteTally)) {
-    return "";
+    return null;
   }
 
-  const rows = payload.voteTally
-    .map((row) => {
-      if (!row || typeof row !== "object") {
-        return null;
-      }
+  const tally = payload.voteTally.reduce<Record<string, number>>((result, row) => {
+    if (!row || typeof row !== "object") {
+      return result;
+    }
 
-      const record = row as Record<string, unknown>;
-      const playerNameValue = record.playerName;
-      const votesValue = record.votes;
+    const record = row as Record<string, unknown>;
+    const playerNameValue = record.playerName;
+    const votesValue = record.votes;
 
-      if (typeof playerNameValue !== "string" || typeof votesValue !== "number") {
-        return null;
-      }
+    if (typeof playerNameValue !== "string" || typeof votesValue !== "number") {
+      return result;
+    }
 
-      return `${playerNameValue}: ${votesValue}`;
-    })
-    .filter((row): row is string => Boolean(row));
+    result[playerNameValue] = votesValue;
+    return result;
+  }, {});
 
-  return rows.length > 0 ? ` Vote count: ${rows.join(", ")}.` : "";
+  return Object.keys(tally).length > 0 ? tally : null;
+};
+
+const hiddenPromptPayloadKeys = new Set(["id", "playerId", "senderPlayerId", "recipientPlayerId", "voterId", "targetId", "summary"]);
+
+const sanitizePromptPayloadValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(sanitizePromptPayloadValue);
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !hiddenPromptPayloadKeys.has(key) && !key.endsWith("Id"))
+      .map(([key, item]) => [key, sanitizePromptPayloadValue(item)]),
+  );
+};
+
+const promptEventPayload = (payload: Record<string, unknown>) => {
+  const sanitized = sanitizePromptPayloadValue(payload) as Record<string, unknown>;
+  const tally = voteTallyMap(payload);
+  delete sanitized.voteTally;
+
+  return tally ? { ...sanitized, voteTally: tally } : sanitized;
 };
 
 const formatEvent = (event: GameEvent, order: number): ConversationTurn => {
-  let summary = `Game event: ${event.type}.`;
-
-  if (event.type === "game_started") {
-    const contestants = Array.isArray(event.payload.contestants) ? event.payload.contestants.map(String) : [];
-    summary =
-      contestants.length > 0
-        ? `Current state: ${contestants.length} contestants remaining: ${contestants.join(", ")}. Begin Round ${event.round}.`
-        : `Current state: Begin Round ${event.round}.`;
-  }
-
-  if (event.type === "tribal_started") {
-    summary = `Tribal Council began. ${typeof event.payload.prompt === "string" ? event.payload.prompt : ""}`.trim();
-  }
-
-  if (event.type === "votes_cast") {
-    summary = "Votes were cast.";
-  }
-
-  if (event.type === "player_eliminated") {
-    summary = `${String(event.payload.playerName ?? "A contestant")} was eliminated. Placement: ${String(event.payload.placement ?? "unknown")}.${formatVoteTally(event.payload)}`;
-  }
-
-  if (event.type === "round_started") {
-    const contestants = Array.isArray(event.payload.contestants) ? event.payload.contestants.map(String) : [];
-    summary =
-      contestants.length > 0
-        ? `Current state: ${contestants.length} contestants remaining: ${contestants.join(", ")}. Begin Round ${event.round}.`
-        : String(event.payload.summary ?? "A new round began.");
-  }
+  const payload = promptEventPayload(event.payload);
+  const value =
+    event.type === "round_started"
+      ? {
+          round: event.round,
+          eventType: event.type,
+          payload,
+        }
+      : {
+          eventType: event.type,
+          payload,
+        };
 
   return {
     createdAt: event.createdAt,
     order,
     role: "user",
-    content: jsonContent(
-      typedMessage("game_event", {
-        round: event.round,
-        eventType: event.type,
-        summary,
-        payload: event.payload,
-      }),
-    ),
+    content: jsonContent(typedMessage("game_event", value)),
   };
 };
+
+const eventObservedByModel = (event: GameEvent) => event.type !== "game_started" && event.type !== "votes_cast";
 
 const buildAppendOnlyConversation = (game: GameView, ai: PlayerSummary, stopAfterMessageId?: string) => {
   let order = 0;
   const turns = [
-    ...game.events.map((event) => formatEvent(event, order++)),
+    ...game.events.filter(eventObservedByModel).map((event) => formatEvent(event, order++)),
     ...game.messages.filter((message) => messageObservedBy(message, ai)).map((message) => formatMessage(game, ai, message, order++)),
   ].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.order - b.order);
 
@@ -442,7 +442,6 @@ const buildInput = (game: GameView, ai: PlayerSummary, task: string) => {
       role: "user" as const,
       content: jsonContent(
         typedMessage("contestant_dossiers", {
-          note: "These are all named contestants; no contestant is identified as human or AI.",
           contestants: contestantDossiers,
         }),
       ),
@@ -474,7 +473,6 @@ export const buildDebugAiContexts = (game: GameView): AiDebugContext[] =>
             role: "user",
             content: jsonContent(
               typedMessage("contestant_dossiers", {
-                note: "These are all named contestants; no contestant is identified as human or AI.",
                 contestants: contestantDossiers,
               }),
             ),
@@ -498,7 +496,6 @@ const buildHostInput = (game: GameView, host: PlayerSummary, task: string) => {
       role: "user" as const,
       content: jsonContent(
         typedMessage("contestant_dossiers", {
-          note: "Contestants still in the social game and their public strategic profiles.",
           contestants: contestantDossiers,
         }),
       ),
@@ -521,7 +518,6 @@ const buildInputWithConversation = (game: GameView, ai: PlayerSummary, conversat
       role: "user" as const,
       content: jsonContent(
         typedMessage("contestant_dossiers", {
-          note: "These are all named contestants; no contestant is identified as human or AI.",
           contestants: contestantDossiers,
         }),
       ),
@@ -570,7 +566,6 @@ export const generateAiPrivateTurn = async (
 Use "privateMessages":[] when messaging another named contestant is not strategically useful.
 Use {"type":"no_response","response":"","privateMessages":[]} only when no in-world response should be sent.`;
   const task = `Respond privately to ${sender.name} as ${ai.name}, based on the latest delivered private message.
-Latest delivered message id: ${currentMessage?.id ?? "unknown"}
 Available side action: privateMessages
 Eligible private message recipients: ${candidateNames}
 Do not message yourself, eliminated contestants, or anyone outside the eligible recipient list.`;
