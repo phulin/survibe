@@ -1,7 +1,9 @@
 import { Clock, Crown, MessageCircle, Play, Send, Skull, Users, Vote } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { advanceToTribal, answerTribalCouncil, castVote, createGame, getGame, revealVotes, sendChat } from "./engine/client";
 import type { GameMessage, GameView, PlayerSummary } from "@survibe/shared";
+
+const nearBottomScrollThreshold = 80;
 
 const playerName = (game: GameView | null, playerId: string | null) => {
   if (!game || !playerId) {
@@ -401,11 +403,37 @@ const ChatPanel = ({
 }) => {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const wasNearBottomRef = useRef(true);
   const refocusAfterSend = useRef(false);
   const messages = selectedAi ? privateMessagesFor(game.messages, game.humanPlayerId, selectedAi.id) : [];
   const pendingChat = selectedAi ? pendingChats[selectedAi.id] : null;
   const showPending = Boolean(pendingChat);
   const selectedChatBusy = Boolean(pendingChat);
+  const lastMessageId = messages.at(-1)?.id;
+
+  const updateWasNearBottom = () => {
+    const node = messagesRef.current;
+    if (!node) {
+      wasNearBottomRef.current = true;
+      return;
+    }
+
+    wasNearBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= nearBottomScrollThreshold;
+  };
+
+  useLayoutEffect(() => {
+    const node = messagesRef.current;
+    if (!node) {
+      return;
+    }
+
+    if (wasNearBottomRef.current) {
+      node.scrollTop = node.scrollHeight;
+    }
+
+    updateWasNearBottom();
+  }, [lastMessageId, messages.length, pendingChat?.message, selectedAi?.id, showPending]);
 
   useEffect(() => {
     if (!refocusAfterSend.current || busy || selectedChatBusy || !selectedAi || game.status !== "camp") {
@@ -436,7 +464,7 @@ const ChatPanel = ({
         </div>
         <MessageCircle size={22} />
       </header>
-      <div className="messages">
+      <div className="messages" onScroll={updateWasNearBottom} ref={messagesRef}>
         {selectedAi ? (
           messages.length > 0 || showPending ? (
             <>
