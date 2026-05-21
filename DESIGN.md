@@ -274,6 +274,7 @@ The UI should render partial output while preserving the final assistant message
 Recommended architecture:
 
 - React client calls Cloudflare Worker API endpoints under `/api/*`.
+- D1/Worker is the source of truth for game state. The browser may keep a transient render snapshot and UI-only selections, but all gameplay mutations must be persisted on the server and then reloaded by game ID.
 - The Worker reads `OPENAI_API_KEY` from Cloudflare Worker secrets via the `env` binding.
 - Production secret setup uses `wrangler secret put OPENAI_API_KEY` or the Cloudflare dashboard; the key is not stored in `wrangler.toml`.
 - Local development should use `.env.example` as the committed template, with real secret files ignored by git. The existing `.env` should not be read into source control or documentation.

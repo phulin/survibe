@@ -259,6 +259,24 @@ export const App = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const applyServerGame = (loadedGame: GameView) => {
+    setGame(loadedGame);
+    setSelectedVote("");
+    setSelectedAiId((current) => {
+      if (current && loadedGame.players.some((player) => player.id === current && player.kind === "ai" && player.status === "active")) {
+        return current;
+      }
+
+      return aiPlayers(loadedGame)[0]?.id ?? null;
+    });
+  };
+
+  const loadGameById = async (gameId: string) => {
+    const loadedGame = await getGame(gameId);
+    applyServerGame(loadedGame);
+    return loadedGame;
+  };
+
   useEffect(() => {
     const loadFromUrl = () => {
       const gameId = gameIdFromPath();
@@ -272,18 +290,7 @@ export const App = () => {
 
       setBusy(true);
       setError(null);
-      getGame(gameId)
-        .then((loadedGame) => {
-          setGame(loadedGame);
-          setSelectedVote("");
-          setSelectedAiId((current) => {
-            if (current && loadedGame.players.some((player) => player.id === current && player.kind === "ai" && player.status === "active")) {
-              return current;
-            }
-
-            return aiPlayers(loadedGame)[0]?.id ?? null;
-          });
-        })
+      loadGameById(gameId)
         .catch((err) => {
           setGame(null);
           setSelectedAiId(null);
@@ -306,17 +313,26 @@ export const App = () => {
     return game.players.find((player) => player.id === selectedAiId && player.kind === "ai") ?? aiPlayers(game)[0] ?? null;
   }, [game, selectedAiId]);
 
-  const run = async (action: () => Promise<GameView>) => {
+  const startGame = async (humanName: string, aiCount: number) => {
     setBusy(true);
     setError(null);
     try {
-      const nextGame = await action();
-      setGame(nextGame);
-      setGamePath(nextGame.id);
-      setSelectedVote("");
-      if (!selectedAiId) {
-        setSelectedAiId(aiPlayers(nextGame)[0]?.id ?? null);
-      }
+      const createdGame = await createGame({ humanName, aiCount });
+      setGamePath(createdGame.id);
+      await loadGameById(createdGame.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runServerAction = async (gameId: string, action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      await loadGameById(gameId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed.");
     } finally {
@@ -327,7 +343,7 @@ export const App = () => {
   if (!game) {
     return (
       <>
-        <Setup busy={busy} onCreate={(humanName, aiCount) => run(() => createGame({ humanName, aiCount }))} />
+        <Setup busy={busy} onCreate={startGame} />
         {error ? <div className="toast">{error}</div> : null}
       </>
     );
@@ -336,14 +352,19 @@ export const App = () => {
   return (
     <main className="app-shell">
       <Roster game={game} selectedId={selectedAi?.id ?? null} onSelect={setSelectedAiId} />
-      <ChatPanel game={game} selectedAi={selectedAi} busy={busy} onSend={(message) => selectedAi && run(() => sendChat(game.id, selectedAi.id, { message }))} />
+      <ChatPanel
+        game={game}
+        selectedAi={selectedAi}
+        busy={busy}
+        onSend={(message) => selectedAi && runServerAction(game.id, () => sendChat(game.id, selectedAi.id, { message }))}
+      />
       <TribalPanel
         game={game}
         selectedVote={selectedVote}
         onSelectVote={setSelectedVote}
-        onTribal={() => run(() => advanceToTribal(game.id))}
-        onVote={() => run(() => castVote(game.id, { targetId: selectedVote }))}
-        onReveal={() => run(() => revealVotes(game.id))}
+        onTribal={() => runServerAction(game.id, () => advanceToTribal(game.id))}
+        onVote={() => runServerAction(game.id, () => castVote(game.id, { targetId: selectedVote }))}
+        onReveal={() => runServerAction(game.id, () => revealVotes(game.id))}
         busy={busy}
       />
       {game.status === "complete" ? (
