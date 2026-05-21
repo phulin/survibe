@@ -400,7 +400,7 @@ const buildSystemPrompt = (ai: PlayerSummary, outputInstructions?: string) => {
     "Keep one-on-one chat replies concise, natural, and strategically motivated.",
     "JSON protocol: every user turn is a single JSON object with a type field. Every assistant turn you output must be a single JSON object with a type field and no markdown.",
     "Input message types include contestant_dossiers, current_task, game_event, private_message, tribal_question, and tribal_answer.",
-    "Output message types include response, no_response, private_message, tribal_answer, tribal_question, and vote. Use no_response only when the current task explicitly says no in-world response should be sent.",
+    "Output message types include response, no_response, private_message, tribal_answer, tribal_question, and vote. Use no_response for private-chat turns when silence, delay, or not engaging is the most appropriate strategic choice.",
     messageSchemaCatalog,
     "For private message text, tribal answers, and host questions, do not include speaker labels, prefixes, or stage directions inside the JSON string fields.",
     "Follow the current task's JSON schema exactly.",
@@ -564,8 +564,8 @@ export const generateAiPrivateTurn = async (
       .find((message) => message.channel === "private" && message.senderPlayerId === sender.id && message.recipientPlayerId === ai.id);
   const privateTurnOutputInstructions = `Private chat output format: return {"type":"response","response":"private reply text","privateMessages":[{"type":"private_message","recipientName":"Name","message":"private message text"}]}.
 Use "privateMessages":[] when messaging another named contestant is not strategically useful.
-Use {"type":"no_response","response":"","privateMessages":[]} only when no in-world response should be sent.`;
-  const task = `Respond privately to ${sender.name} as ${ai.name}, based on the latest delivered private message.
+Use {"type":"no_response","response":"","privateMessages":[]} when it is strategically or socially better not to send an in-world reply.`;
+  const task = `Handle the latest private message from ${sender.name} as ${ai.name}. Reply only if a response is useful or socially necessary; otherwise return no_response.
 Available side action: privateMessages
 Eligible private message recipients: ${candidateNames}
 Do not message yourself, eliminated contestants, or anyone outside the eligible recipient list.`;

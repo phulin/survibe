@@ -537,7 +537,7 @@ const debugMessageDetail = (message: AiDebugContextMessage) => {
     }
 
     if (sender && recipient) {
-      return `${sender} -> ${recipient}`;
+      return `${sender} → ${recipient}`;
     }
 
     if (sender) {
