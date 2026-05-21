@@ -139,6 +139,11 @@ type ConversationTurn = {
   content: string;
 };
 
+type MessageInstruction = {
+  messageId: string;
+  instruction: string;
+};
+
 const playerName = (game: GameView, playerId: string | null) => {
   if (!playerId) {
     return "System";
@@ -155,7 +160,7 @@ const messageObservedBy = (message: GameMessage, ai: PlayerSummary) => {
   return message.senderPlayerId === ai.id || message.recipientPlayerId === ai.id;
 };
 
-const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, order: number): ConversationTurn => {
+const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, order: number, instruction?: MessageInstruction): ConversationTurn => {
   const sender = playerName(game, message.senderPlayerId);
   const recipient = message.recipientPlayerId ? playerName(game, message.recipientPlayerId) : "the group";
 
@@ -175,7 +180,9 @@ const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, 
     createdAt: message.createdAt,
     order,
     role: "user",
-    content: `[round ${message.round}] ${visibility} from ${sender}${destination}: ${message.content}`,
+    content: `[round ${message.round}] ${visibility} from ${sender}${destination}: ${message.content}${
+      instruction?.messageId === message.id ? `\n\n${instruction.instruction}` : ""
+    }`,
   };
 };
 
@@ -244,11 +251,11 @@ const formatEvent = (event: GameEvent, order: number): ConversationTurn => {
   };
 };
 
-const buildAppendOnlyConversation = (game: GameView, ai: PlayerSummary) => {
+const buildAppendOnlyConversation = (game: GameView, ai: PlayerSummary, instruction?: MessageInstruction) => {
   let order = 0;
   const turns = [
     ...game.events.map((event) => formatEvent(event, order++)),
-    ...game.messages.filter((message) => messageObservedBy(message, ai)).map((message) => formatMessage(game, ai, message, order++)),
+    ...game.messages.filter((message) => messageObservedBy(message, ai)).map((message) => formatMessage(game, ai, message, order++, instruction)),
   ].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.order - b.order);
 
   return turns;
@@ -311,6 +318,20 @@ const buildInput = (game: GameView, ai: PlayerSummary, task: string) => {
   ];
 };
 
+const buildInputWithConversation = (game: GameView, ai: PlayerSummary, conversation: ConversationTurn[]) => {
+  const systemPrompt = buildSystemPrompt(ai);
+  const contestantDossiers = buildContestantDossiers(game);
+
+  return [
+    { role: "system" as const, content: systemPrompt },
+    {
+      role: "user" as const,
+      content: `Contestant dossiers. These are all players; no contestant is identified as human or AI:\n${contestantDossiers}`,
+    },
+    ...conversation.map((turn) => ({ role: turn.role, content: turn.content })),
+  ];
+};
+
 const promptCacheKey = (gameId: string, aiId: string) => {
   const source = `${gameId}:${aiId}:chat`;
   let hash = 0;
@@ -337,17 +358,22 @@ export const generateAiPrivateTurn = async (
   }
 
   const candidateNames = messageCandidates.map((candidate) => candidate.name).join(", ") || "none";
-  const input = buildInput(
-    game,
-    ai,
-    `Current task: Respond privately to ${sender.name}'s latest message as ${ai.name}, then optionally use your only tool.
-Latest message from ${sender.name}: ${incomingMessage}
+  const currentMessage = [...game.messages]
+    .reverse()
+    .find((message) => message.channel === "private" && message.senderPlayerId === sender.id && message.recipientPlayerId === ai.id);
+  const instruction = currentMessage
+    ? {
+        messageId: currentMessage.id,
+        instruction: `Instruction for this received private message: respond privately to ${sender.name} as ${ai.name}, then optionally use your only tool.
 Available tool: message_player
 Eligible message_player recipients: ${candidateNames}
 Output only JSON with this shape:
 {"reply":"private reply to ${sender.name}","toolCalls":[{"tool":"message_player","recipientName":"Name","message":"private message"}]}
 Use zero toolCalls when messaging another player is not strategically useful. Do not message yourself, eliminated players, or anyone outside the eligible recipient list.`,
-  );
+      }
+    : undefined;
+  const conversation = buildAppendOnlyConversation(game, ai, instruction);
+  const input = buildInputWithConversation(game, ai, conversation);
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
