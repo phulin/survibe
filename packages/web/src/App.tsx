@@ -1,5 +1,5 @@
 import { Bug, Clock, Crown, MessageCircle, Play, Send, Skull, Users, Vote } from "lucide-react";
-import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, SyntheticEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   advanceToTribal,
   answerTribalCouncil,
@@ -615,44 +615,106 @@ const DebugMessageBody = ({ content }: { content: string }) => {
   return <DebugJsonValue value={parsed} />;
 };
 
-const DebugContextPanel = ({ context }: { context: AiDebugContext | null }) => (
-  <aside className="debug-panel" aria-label="AI context debug panel">
-    <header className="debug-header">
-      <div>
-        <p className="eyebrow">Debug</p>
-        <h3>AI context</h3>
-      </div>
-      <Bug size={19} />
-    </header>
-    {context ? (
-      <>
-        <div className="debug-meta">
-          <span>{context.promptMessages.length} prompt messages</span>
-          <span>{context.observedPrivateMessageCount} private observed</span>
-        </div>
-        <div className="debug-messages">
-          {context.promptMessages.map((message, index) => {
-            const detail = debugMessageDetail(message);
+const DebugContextPanel = ({ context }: { context: AiDebugContext | null }) => {
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const wasNearBottomRef = useRef(true);
+  const lastMessage = context?.promptMessages.at(-1);
+  const lastMessageKey = lastMessage ? `${lastMessage.sourceMessageId ?? lastMessage.role}:${lastMessage.content.length}` : "none";
 
-            return (
-              <details className={`debug-message ${message.role}`} key={`${message.sourceMessageId ?? message.role}-${index}`}>
-                <summary>
-                  <span className="debug-type">{debugMessageLabel(message)}</span>
-                  {detail ? <span>{detail}</span> : null}
-                </summary>
-                <div className="debug-message-body">
-                  <DebugMessageBody content={message.content} />
-                </div>
-              </details>
-            );
-          })}
+  const updateWasNearBottom = () => {
+    const node = messagesRef.current;
+    if (!node) {
+      wasNearBottomRef.current = true;
+      return;
+    }
+
+    wasNearBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= nearBottomScrollThreshold;
+  };
+
+  useLayoutEffect(() => {
+    const node = messagesRef.current;
+    if (!node) {
+      return;
+    }
+
+    if (wasNearBottomRef.current) {
+      node.scrollTop = node.scrollHeight;
+    }
+
+    updateWasNearBottom();
+  }, [context?.playerId, context?.promptMessages.length, lastMessageKey]);
+
+  const scrollOpenedMessageIntoView = (event: SyntheticEvent<HTMLDetailsElement>) => {
+    const details = event.currentTarget;
+    if (!details.open) {
+      updateWasNearBottom();
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const container = messagesRef.current;
+      if (!container) {
+        return;
+      }
+
+      const containerRect = container.getBoundingClientRect();
+      const detailsRect = details.getBoundingClientRect();
+      const bottomOverflow = detailsRect.bottom - containerRect.bottom;
+      const topOverflow = containerRect.top - detailsRect.top;
+
+      if (bottomOverflow > 0) {
+        container.scrollTop += bottomOverflow + 8;
+      } else if (topOverflow > 0) {
+        container.scrollTop -= topOverflow + 8;
+      }
+
+      updateWasNearBottom();
+    });
+  };
+
+  return (
+    <aside className="debug-panel" aria-label="AI context debug panel">
+      <header className="debug-header">
+        <div>
+          <p className="eyebrow">Debug</p>
+          <h3>AI context</h3>
         </div>
-      </>
-    ) : (
-      <div className="empty-state">Debug context is unavailable for this conversation.</div>
-    )}
-  </aside>
-);
+        <Bug size={19} />
+      </header>
+      {context ? (
+        <>
+          <div className="debug-meta">
+            <span>{context.promptMessages.length} prompt messages</span>
+            <span>{context.observedPrivateMessageCount} private observed</span>
+          </div>
+          <div className="debug-messages" onScroll={updateWasNearBottom} ref={messagesRef}>
+            {context.promptMessages.map((message, index) => {
+              const detail = debugMessageDetail(message);
+
+              return (
+                <details
+                  className={`debug-message ${message.role}`}
+                  key={`${message.sourceMessageId ?? message.role}-${index}`}
+                  onToggle={scrollOpenedMessageIntoView}
+                >
+                  <summary>
+                    <span className="debug-type">{debugMessageLabel(message)}</span>
+                    {detail ? <span>{detail}</span> : null}
+                  </summary>
+                  <div className="debug-message-body">
+                    <DebugMessageBody content={message.content} />
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="empty-state">Debug context is unavailable for this conversation.</div>
+      )}
+    </aside>
+  );
+};
 
 const ChatPanel = ({
   game,
