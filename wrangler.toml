@@ -5,6 +5,11 @@ compatibility_date = "2026-05-21"
 [observability]
 enabled = true
 
+[assets]
+directory = "dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "survibe"
@@ -13,6 +18,7 @@ migrations_dir = "migrations"
 
 [vars]
 APP_ENV = "development"
+OPENAI_MODEL = "gpt-4.1-mini"
 
 [secrets]
 required = ["OPENAI_API_KEY"]
