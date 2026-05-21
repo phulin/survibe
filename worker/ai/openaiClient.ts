@@ -54,6 +54,14 @@ const playerName = (game: GameView, playerId: string | null) => {
   return game.players.find((player) => player.id === playerId)?.name ?? "Unknown player";
 };
 
+const messageObservedBy = (message: GameMessage, ai: PlayerSummary) => {
+  if (message.channel !== "private") {
+    return true;
+  }
+
+  return message.senderPlayerId === ai.id || message.recipientPlayerId === ai.id;
+};
+
 const formatMessage = (game: GameView, ai: PlayerSummary, message: GameMessage, order: number): ConversationTurn => {
   const sender = playerName(game, message.senderPlayerId);
   const recipient = message.recipientPlayerId ? playerName(game, message.recipientPlayerId) : "the group";
@@ -128,7 +136,7 @@ const buildAppendOnlyConversation = (game: GameView, ai: PlayerSummary) => {
   let order = 0;
   const turns = [
     ...game.events.map((event) => formatEvent(event, order++)),
-    ...game.messages.map((message) => formatMessage(game, ai, message, order++)),
+    ...game.messages.filter((message) => messageObservedBy(message, ai)).map((message) => formatMessage(game, ai, message, order++)),
     ...game.votes.map((vote) => formatVote(game, vote, order++)),
   ].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.order - b.order);
 
