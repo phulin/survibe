@@ -297,13 +297,13 @@ textarea {
   font-weight: 900;
 }
 
-.players {
+.contestants {
   display: grid;
   gap: 8px;
 }
 
 .tribal-shortcut,
-.player {
+.contestant {
   position: relative;
   width: 100%;
   display: grid;
@@ -336,16 +336,16 @@ textarea {
   outline: 2px solid #bf7c35;
 }
 
-.player:hover,
-.player:focus-visible {
+.contestant:hover,
+.contestant:focus-visible {
   z-index: 4;
 }
 
-.player.selected {
+.contestant.selected {
   outline: 2px solid #bf7c35;
 }
 
-.player.eliminated {
+.contestant.eliminated {
   color: #7c7d76;
   background: #ecece6;
 }
@@ -361,20 +361,20 @@ textarea {
   font-weight: 900;
 }
 
-.player strong,
-.player small {
+.contestant strong,
+.contestant small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.player small {
+.contestant small {
   color: #64706b;
   font-size: 12px;
 }
 
-.player-card {
+.contestant-card {
   position: absolute;
   left: calc(100% + 10px);
   top: 50%;
@@ -398,21 +398,21 @@ textarea {
     visibility 140ms ease;
 }
 
-.player-card strong {
+.contestant-card strong {
   color: #193d35;
   font-size: 13px;
   white-space: normal;
 }
 
-.player-card span {
+.contestant-card span {
   color: #43504b;
   font-size: 12px;
   line-height: 1.35;
   white-space: normal;
 }
 
-.player:hover .player-card,
-.player:focus-visible .player-card {
+.contestant:hover .contestant-card,
+.contestant:focus-visible .contestant-card {
   opacity: 1;
   pointer-events: auto;
   transform: translate(0, -50%);
@@ -690,7 +690,7 @@ textarea {
     width: 100%;
   }
 
-  .player-card {
+  .contestant-card {
     left: 10px;
     right: 10px;
     top: calc(100% + 8px);
@@ -698,8 +698,8 @@ textarea {
     transform: translateY(8px);
   }
 
-  .player:hover .player-card,
-  .player:focus-visible .player-card {
+  .contestant:hover .contestant-card,
+  .contestant:focus-visible .contestant-card {
     transform: translateY(0);
   }
 

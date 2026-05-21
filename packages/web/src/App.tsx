@@ -15,9 +15,9 @@ const playerName = (game: GameView | null, playerId: string | null) => {
   return game.players.find((player) => player.id === playerId)?.name ?? `Contestant ${playerId.slice(0, 8)}`;
 };
 
-const activePlayers = (game: GameView) => game.players.filter((player) => player.kind !== "host" && player.status === "active");
+const activeContestants = (game: GameView) => game.players.filter((contestant) => contestant.kind !== "host" && contestant.status === "active");
 
-const aiPlayers = (game: GameView) => game.players.filter((player) => player.kind === "ai" && player.status === "active");
+const aiContestants = (game: GameView) => game.players.filter((contestant) => contestant.kind === "ai" && contestant.status === "active");
 
 const isTribalPanelStatus = (status: GameView["status"]) => tribalPanelStatuses.has(status);
 
@@ -63,7 +63,7 @@ type RecentGame = {
   status: GameView["status"];
   round: number;
   updatedAt: string;
-  activePlayers: number;
+  activeContestants: number;
 };
 
 const recentGamesStorageKey = "survibe.recentGames.v1";
@@ -151,10 +151,14 @@ const parseRecentGames = (value: string | null): RecentGame[] => {
         typeof record.status !== "string" ||
         typeof record.round !== "number" ||
         typeof record.updatedAt !== "string" ||
+        typeof record.activeContestants !== "number" &&
         typeof record.activePlayers !== "number"
       ) {
         return [];
       }
+
+      const activeContestantCount =
+        typeof record.activeContestants === "number" ? record.activeContestants : Number(record.activePlayers);
 
       return [
         {
@@ -163,7 +167,7 @@ const parseRecentGames = (value: string | null): RecentGame[] => {
           status: record.status as RecentGame["status"],
           round: record.round,
           updatedAt: record.updatedAt,
-          activePlayers: record.activePlayers,
+          activeContestants: activeContestantCount,
         },
       ];
     });
@@ -198,7 +202,7 @@ const rememberGame = (game: GameView) => {
     status: game.status,
     round: game.round,
     updatedAt: game.updatedAt,
-    activePlayers: activePlayers(game).length,
+    activeContestants: activeContestants(game).length,
   };
   const next = [recentGame, ...current.filter((item) => item.id !== game.id)]
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
@@ -282,7 +286,7 @@ const votesCastForCurrentRound = (game: GameView) => {
     return null;
   }
 
-  return typeof event.payload.totalVotes === "number" ? event.payload.totalVotes : activePlayers(game).length;
+  return typeof event.payload.totalVotes === "number" ? event.payload.totalVotes : activeContestants(game).length;
 };
 
 const Setup = ({
@@ -350,7 +354,7 @@ const Setup = ({
                     <span>
                       <strong>{recentGame.name}</strong>
                       <small>
-                        Round {recentGame.round} / {recentGame.status} / {recentGame.activePlayers} active
+                        Round {recentGame.round} / {recentGame.status} / {recentGame.activeContestants} active
                       </small>
                     </span>
                     <span className="recent-meta">
@@ -386,12 +390,12 @@ const Roster = ({ game, selectedId, onSelect }: { game: GameView; selectedId: st
         <Vote size={16} />
       </button>
     ) : null}
-    <div className="players">
+    <div className="contestants">
       {game.players
         .filter((player) => player.kind !== "host")
         .map((player) => (
           <button
-            className={`player ${selectedId === player.id ? "selected" : ""} ${player.status}`}
+            className={`contestant ${selectedId === player.id ? "selected" : ""} ${player.status}`}
             key={player.id}
             onClick={() => player.kind === "ai" && player.status === "active" && onSelect(player.id)}
             disabled={player.kind !== "ai" || player.status !== "active"}
@@ -403,7 +407,7 @@ const Roster = ({ game, selectedId, onSelect }: { game: GameView; selectedId: st
               <small>{player.profile?.archetype ?? "Contestant"}</small>
             </span>
             {player.profile ? (
-              <span className="player-card" role="tooltip">
+              <span className="contestant-card" role="tooltip">
                 <strong>{player.profile.archetype}</strong>
                 <span>{player.profile.biography}</span>
                 <span>Speech: {player.profile.speechStyle}</span>
@@ -669,7 +673,7 @@ const TribalChatPanel = ({
                       disabled={busy}
                     >
                       <option value="">Choose</option>
-                      {activePlayers(game)
+                      {activeContestants(game)
                         .filter((player) => player.id !== game.humanPlayerId)
                         .map((player) => (
                           <option value={player.id} key={player.id}>
@@ -825,7 +829,7 @@ export const App = () => {
         return current;
       }
 
-      return aiPlayers(loadedGame)[0]?.id ?? null;
+      return aiContestants(loadedGame)[0]?.id ?? null;
     });
   };
 
@@ -875,7 +879,7 @@ export const App = () => {
       return null;
     }
 
-    return game.players.find((player) => player.id === selectedAiId && player.kind === "ai") ?? aiPlayers(game)[0] ?? null;
+    return game.players.find((player) => player.id === selectedAiId && player.kind === "ai") ?? aiContestants(game)[0] ?? null;
   }, [game, selectedAiId]);
 
   const startGame = async (humanName: string, aiCount: number) => {
