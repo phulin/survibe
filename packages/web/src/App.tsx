@@ -12,7 +12,7 @@ const playerName = (game: GameView | null, playerId: string | null) => {
     return "System";
   }
 
-  return game.players.find((player) => player.id === playerId)?.name ?? "Unknown";
+  return game.players.find((player) => player.id === playerId)?.name ?? `Contestant ${playerId.slice(0, 8)}`;
 };
 
 const activePlayers = (game: GameView) => game.players.filter((player) => player.kind !== "host" && player.status === "active");
@@ -310,7 +310,7 @@ const Setup = ({
         <div>
           <p className="eyebrow">Post-merge benchmark</p>
           <h1>Survibe</h1>
-          <p className="lede">One human enters a live social vote against a cast of persistent AI players.</p>
+          <p className="lede">One human enters a live social vote against named AI contestants.</p>
         </div>
         <div className="setup-stack">
           <form className="setup-form" onSubmit={submit}>
@@ -520,7 +520,7 @@ const ChatPanel = ({
             <div className="empty-state">No private conversation yet.</div>
           )
         ) : (
-          <div className="empty-state">Pick an active AI player from the cast.</div>
+          <div className="empty-state">Pick a named active AI contestant from the cast.</div>
         )}
       </div>
       <form className="composer" onSubmit={submit}>
@@ -1019,6 +1019,14 @@ export const App = () => {
     );
   }
 
+  const eliminatedAiNames = game.players
+    .filter((player) => player.kind === "ai" && player.status === "eliminated")
+    .map((player) => player.name);
+  const outlastedSummary =
+    eliminatedAiNames.length > 0
+      ? `You outlasted ${eliminatedAiNames.join(", ")}.`
+      : "No named AI contestants were eliminated before the game ended.";
+
   return (
     <main className="app-shell">
       <GameHeader game={game} onTribal={() => runServerAction(game.id, () => advanceToTribal(game.id))} busy={busy || hasPendingChats} />
@@ -1056,7 +1064,7 @@ export const App = () => {
       {game.status === "complete" ? (
         <div className="result">
           <strong>Game complete</strong>
-          <span>You outlasted {game.players.filter((player) => player.kind === "ai" && player.status === "eliminated").length} AI players.</span>
+          <span>{outlastedSummary}</span>
         </div>
       ) : null}
       {error ? <div className="toast">{error}</div> : null}

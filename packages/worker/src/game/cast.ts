@@ -91,7 +91,7 @@ export const AI_CAST: CastProfile[] = [
   },
   {
     name: "Knox Reed",
-    archetype: "The Chaos Player",
+    archetype: "The Chaos Agent",
     biography: "A poker dealer who knows panic can be profitable.",
     speechStyle: "Dry, provocative, and slippery.",
     strategicStyle: "Creates uncertainty to prevent stable majorities.",

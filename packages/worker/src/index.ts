@@ -161,7 +161,7 @@ const revealVotes = async (env: Env, gameId: string) => {
     return badRequest("No votes have been cast.");
   }
   if (roundVotes.length < activeContestants(game.players).length) {
-    return badRequest("Not every active player has voted.");
+    return badRequest("Not every named contestant has voted.");
   }
 
   const tally = new Map<string, number>();
@@ -442,7 +442,7 @@ export default {
         const ai = findPlayer(game, chatMatch.playerId);
         const human = findPlayer(game, game.humanPlayerId);
         if (!ai || ai.kind !== "ai" || ai.status !== "active" || !human) {
-          return badRequest("Chat target must be an active AI player.");
+          return badRequest("Chat target must be a named active AI contestant.");
         }
 
         const body = await readJson<ChatRequest>(request);
@@ -514,7 +514,7 @@ export default {
 
         const human = findPlayer(game, game.humanPlayerId);
         if (!human || human.status !== "active") {
-          return badRequest("Only an active player can answer at Tribal Council.");
+          return badRequest("Only a named active contestant can answer at Tribal Council.");
         }
 
         const alreadyAnswered = game.messages.some(

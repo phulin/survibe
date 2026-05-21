@@ -13,7 +13,7 @@ export const assertActiveTarget = (game: GameView, targetId: string) => {
   const target = findPlayer(game, targetId);
 
   if (!target || target.kind === "host" || target.status !== "active") {
-    throw new Error("Target must be an active player.");
+    throw new Error("Target must be a named active contestant.");
   }
 
   return target;
