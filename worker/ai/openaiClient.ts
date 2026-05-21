@@ -253,7 +253,7 @@ export const generateAiChat = async (
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: env.OPENAI_MODEL ?? "gpt-4.1-mini",
+      model: env.OPENAI_MODEL ?? "gpt-5.4-mini",
       input,
       max_output_tokens: 220,
       prompt_cache_key: promptCacheKey(game.id, ai.id),
