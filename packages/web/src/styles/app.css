@@ -964,6 +964,7 @@ textarea {
 }
 
 .toast {
+  z-index: 100;
   background: #5c1f1b;
   color: #fff;
 }
