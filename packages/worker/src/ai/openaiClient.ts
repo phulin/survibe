@@ -542,6 +542,7 @@ Do not message yourself, eliminated contestants, or anyone outside the eligible 
     body: JSON.stringify({
       model: env.OPENAI_MODEL ?? "gpt-5.5",
       input,
+      reasoning: { effort: "none" },
       text: responseTextFormat("survibe_private_turn", "A private-chat response and optional private messages to other contestants.", privateTurnSchema),
       max_output_tokens: 420,
       prompt_cache_key: promptCacheKey(game.id, ai.id),
@@ -603,6 +604,7 @@ This is public and every remaining contestant will hear it. Return a tribal_answ
     body: JSON.stringify({
       model: env.OPENAI_MODEL ?? "gpt-5.5",
       input,
+      reasoning: { effort: "none" },
       text: responseTextFormat("survibe_tribal_answer", "A public Tribal Council answer from one contestant.", tribalAnswerSchema),
       max_output_tokens: 180,
       prompt_cache_key: promptCacheKey(game.id, ai.id),
@@ -642,6 +644,7 @@ Use previous Tribal Council answers and revealed vote history when relevant. Ret
     body: JSON.stringify({
       model: env.OPENAI_MODEL ?? "gpt-5.5",
       input,
+      reasoning: { effort: "none" },
       text: responseTextFormat("survibe_tribal_question", "A single public Tribal Council question from the host.", tribalQuestionSchema),
       max_output_tokens: 120,
       prompt_cache_key: promptCacheKey(game.id, host.id),
@@ -684,6 +687,7 @@ Return a vote JSON object with targetName, rationale, and confidence.`,
     body: JSON.stringify({
       model: env.OPENAI_MODEL ?? "gpt-5.5",
       input,
+      reasoning: { effort: "none" },
       text: responseTextFormat("survibe_vote", "A private vote decision from one contestant.", voteSchema),
       max_output_tokens: 140,
       prompt_cache_key: promptCacheKey(game.id, ai.id),
