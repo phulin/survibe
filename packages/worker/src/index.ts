@@ -20,6 +20,7 @@ export interface Env {
 type RouteParams = {
   gameId?: string;
   playerId?: string;
+  round?: string;
 };
 
 const json = (body: unknown, init: ResponseInit = {}) => {
@@ -676,6 +677,34 @@ export default {
       if (request.method === "GET" && debugContextMatch?.gameId) {
         const game = await getGame(env.DB, debugContextMatch.gameId);
         return game ? json({ contexts: buildDebugAiContexts(game) }) : notFound();
+      }
+
+      const debugVotesMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/debug\/votes\/(?<round>\d+)$/);
+      if (request.method === "GET" && debugVotesMatch?.gameId && debugVotesMatch.round) {
+        const game = await getGame(env.DB, debugVotesMatch.gameId);
+        if (!game) {
+          return notFound();
+        }
+
+        const round = Number(debugVotesMatch.round);
+        const eliminated = game.events.find((event) => event.type === "player_eliminated" && event.round === round);
+        const nameForPlayer = (playerId: string) => findPlayer(game, playerId)?.name ?? "Unknown";
+        const votes = game.votes
+          .filter((vote) => vote.round === round)
+          .map((vote) => ({
+            voterName: nameForPlayer(vote.voterId),
+            targetName: nameForPlayer(vote.targetId),
+            rationale: vote.rationale,
+            confidence: vote.confidence,
+            createdAt: vote.createdAt,
+          }));
+
+        return json({
+          round,
+          eliminatedPlayerName:
+            typeof eliminated?.payload.playerName === "string" && eliminated.payload.playerName.trim() ? eliminated.payload.playerName : null,
+          votes,
+        });
       }
 
       const chatMatch = matchRoute(url.pathname, /^\/api\/games\/(?<gameId>[^/]+)\/chat\/(?<playerId>[^/]+)$/);

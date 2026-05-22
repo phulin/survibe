@@ -100,6 +100,20 @@ export type AiDebugContextsResponse = {
   contexts: AiDebugContext[];
 };
 
+export type VoteDebugRecord = {
+  voterName: string;
+  targetName: string;
+  rationale: string;
+  confidence: number;
+  createdAt: string;
+};
+
+export type VoteDebugResponse = {
+  round: number;
+  eliminatedPlayerName: string | null;
+  votes: VoteDebugRecord[];
+};
+
 export type CreateGameRequest = {
   humanName: string;
   aiCount: number;

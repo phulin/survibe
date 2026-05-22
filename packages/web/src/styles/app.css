@@ -255,6 +255,21 @@ textarea {
   padding: 6px 9px;
 }
 
+.header-debug-link {
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: #f8f7ef;
+  color: #193d35;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.header-debug-link:hover,
+.header-debug-link:focus-visible {
+  outline: 2px solid #bf7c35;
+}
+
 .game-header-actions {
   display: flex;
   justify-content: flex-end;
@@ -616,6 +631,110 @@ textarea {
 .debug-json-muted {
   color: #7c837e;
   font-style: italic;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(23, 32, 29, 0.42);
+}
+
+.debug-modal {
+  width: min(720px, 100%);
+  max-height: min(720px, calc(100dvh - 36px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(31, 49, 43, 0.14);
+  border-radius: 8px;
+  background: #fffdf3;
+  box-shadow: 0 22px 70px rgba(23, 32, 29, 0.28);
+}
+
+.debug-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid rgba(31, 49, 43, 0.12);
+  padding: 14px 16px;
+}
+
+.debug-modal-header h2 {
+  margin: 0;
+  color: #193d35;
+  font-size: 20px;
+}
+
+.debug-modal-header button {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: #e6ede1;
+  color: #193d35;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.vote-debug-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.vote-debug-row {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(31, 49, 43, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8f7ef;
+}
+
+.vote-debug-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  color: #43504b;
+  font-size: 14px;
+}
+
+.vote-debug-title strong {
+  color: #193d35;
+}
+
+.vote-debug-row p {
+  margin: 0;
+  color: #25322d;
+  line-height: 1.45;
+}
+
+.vote-debug-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #66726d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.debug-modal-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: #66726d;
+  font-weight: 800;
 }
 
 .panel-header h2 {

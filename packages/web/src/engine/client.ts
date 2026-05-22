@@ -4,6 +4,7 @@ import type {
   CreateGameRequest,
   GameView,
   TribalAnswerRequest,
+  VoteDebugResponse,
   VoteRequest,
 } from "@survibe/shared";
 
@@ -33,6 +34,8 @@ export const createGame = (body: CreateGameRequest) =>
 export const getGame = (gameId: string) => request<GameView>(`/api/games/${gameId}`);
 
 export const getDebugAiContexts = (gameId: string) => request<AiDebugContextsResponse>(`/api/games/${gameId}/debug/ai-contexts`);
+
+export const getVoteDebug = (gameId: string, round: number) => request<VoteDebugResponse>(`/api/games/${gameId}/debug/votes/${round}`);
 
 export const sendChat = (gameId: string, aiPlayerId: string, body: ChatRequest) =>
   request<GameView>(`/api/games/${gameId}/chat/${aiPlayerId}`, {

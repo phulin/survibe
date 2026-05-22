@@ -7,10 +7,11 @@ import {
   createGame,
   getDebugAiContexts,
   getGame,
+  getVoteDebug,
   revealVotes,
   sendChat,
 } from "./engine/client";
-import type { AiDebugContext, AiDebugContextMessage, GameMessage, GameView, PlayerSummary } from "@survibe/shared";
+import type { AiDebugContext, AiDebugContextMessage, GameMessage, GameView, PlayerSummary, VoteDebugResponse } from "@survibe/shared";
 
 const nearBottomScrollThreshold = 80;
 
@@ -58,6 +59,12 @@ type PendingChats = Record<string, PendingChat>;
 type PendingTribalAnswer = {
   round: number;
   message: string;
+};
+
+type VoteDebugModalState = {
+  round: number;
+  data: VoteDebugResponse | null;
+  loading: boolean;
 };
 
 type VoteTallyRow = {
@@ -1038,13 +1045,63 @@ const TribalChatPanel = ({
   );
 };
 
+const VoteDebugModal = ({ state, onClose }: { state: VoteDebugModalState; onClose: () => void }) => (
+  <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <section
+      className="debug-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="vote-debug-title"
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      <header className="debug-modal-header">
+        <div>
+          <p className="eyebrow">Vote Debug</p>
+          <h2 id="vote-debug-title">
+            {state.data?.eliminatedPlayerName ? `${state.data.eliminatedPlayerName} eliminated` : `Round ${state.round} votes`}
+          </h2>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close vote debug">
+          ×
+        </button>
+      </header>
+      {state.loading ? (
+        <div className="debug-modal-empty">
+          <LoadingDots label="Loading vote debug" />
+        </div>
+      ) : state.data && state.data.votes.length > 0 ? (
+        <div className="vote-debug-list">
+          {state.data.votes.map((vote, index) => (
+            <article className="vote-debug-row" key={`${vote.voterName}-${vote.targetName}-${vote.createdAt}-${index}`}>
+              <div className="vote-debug-title">
+                <strong>{vote.voterName}</strong>
+                <span>voted for</span>
+                <strong>{vote.targetName}</strong>
+              </div>
+              <p>{vote.rationale}</p>
+              <div className="vote-debug-meta">
+                <span>Confidence {vote.confidence}</span>
+                <span>{formatRecentDate(vote.createdAt)}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="debug-modal-empty">No vote records found for Round {state.round}.</div>
+      )}
+    </section>
+  </div>
+);
+
 const GameHeader = ({
   game,
   onTribal,
+  onShowLastEliminated,
   busy,
 }: {
   game: GameView;
   onTribal: () => void;
+  onShowLastEliminated: (round: number) => void;
   busy: boolean;
 }) => {
   const eliminated = game.events.filter((event) => event.type === "player_eliminated").at(-1);
@@ -1063,7 +1120,11 @@ const GameHeader = ({
       </div>
       <div className="game-header-meta">
         {currentVoteCount !== null ? <span>{currentVoteCount} votes cast</span> : null}
-        {eliminated ? <span>Last eliminated: {String(eliminated.payload.playerName ?? "Unknown")}</span> : null}
+        {eliminated ? (
+          <button className="header-debug-link" type="button" onClick={() => onShowLastEliminated(eliminated.round)}>
+            Last eliminated: {String(eliminated.payload.playerName ?? "Unknown")}
+          </button>
+        ) : null}
         {revealedTally ? <span>Round {revealedTally.round} revealed</span> : null}
       </div>
       <div className="game-header-actions">
@@ -1087,6 +1148,7 @@ export const App = () => {
   const [hiddenTribalMessageIds, setHiddenTribalMessageIds] = useState<Set<string>>(() => new Set());
   const [tribalRevealQueue, setTribalRevealQueue] = useState<string[]>([]);
   const [revealedRoundInChat, setRevealedRoundInChat] = useState<number | null>(null);
+  const [voteDebugModal, setVoteDebugModal] = useState<VoteDebugModalState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasPendingChats = Object.keys(pendingChats).length > 0;
@@ -1130,6 +1192,12 @@ export const App = () => {
 
       return aiContestants(loadedGame)[0]?.id ?? null;
     });
+  };
+
+  const refreshDebugContexts = async (gameId: string) => {
+    const debugPayload = await getDebugAiContexts(gameId).catch(() => ({ contexts: [] }));
+    setDebugContexts(debugPayload.contexts);
+    return debugPayload.contexts;
   };
 
   const loadGameById = async (gameId: string) => {
@@ -1236,6 +1304,23 @@ export const App = () => {
     }
   };
 
+  const showLastEliminatedVoteDebug = async (round: number) => {
+    if (!game) {
+      return;
+    }
+
+    const gameId = game.id;
+    setVoteDebugModal({ round, data: null, loading: true });
+    setError(null);
+    try {
+      const data = await getVoteDebug(gameId, round);
+      setVoteDebugModal({ round, data, loading: false });
+    } catch (err) {
+      setVoteDebugModal(null);
+      setError(err instanceof Error ? err.message : "Could not load vote debug.");
+    }
+  };
+
   const sendOptimisticChat = async (aiId: string, message: string) => {
     if (!game || pendingChats[aiId]) {
       return;
@@ -1275,6 +1360,7 @@ export const App = () => {
     try {
       const revealedGame = await revealVotes(gameId);
       applyServerGame(revealedGame, { preserveTribalStaging: true });
+      await refreshDebugContexts(gameId);
       setPendingTribalAnswer(null);
       setHiddenTribalMessageIds(new Set());
       setTribalRevealQueue([]);
@@ -1316,6 +1402,7 @@ export const App = () => {
         .map((item) => item.id);
 
       applyServerGame(answeredGame, { preserveTribalStaging: true });
+      await refreshDebugContexts(gameId);
       setPendingTribalAnswer(null);
       setHiddenTribalMessageIds(new Set(newAiMessageIds));
       setTribalRevealQueue(newAiMessageIds);
@@ -1345,47 +1432,55 @@ export const App = () => {
       : "No named AI contestants were eliminated before the game ended.";
 
   return (
-    <main className="app-shell">
-      <GameHeader game={game} onTribal={() => runServerAction(game.id, () => advanceToTribal(game.id))} busy={busy || hasPendingChats} />
-      <Roster
-        game={game}
-        selectedId={showTribalPanel ? null : (selectedAi?.id ?? null)}
-        onSelect={(id) => {
-          setRevealedRoundInChat(null);
-          setSelectedAiId(id);
-        }}
-      />
-      {showTribalPanel ? (
-        <TribalChatPanel
+    <>
+      <main className="app-shell">
+        <GameHeader
           game={game}
-          selectedVote={selectedVote}
-          onSelectVote={setSelectedVote}
-          onAnswer={sendOptimisticTribalAnswer}
-          onVote={() => runServerAction(game.id, () => castVote(game.id, { targetId: selectedVote }))}
-          onReveal={revealVotesInChat}
+          onTribal={() => runServerAction(game.id, () => advanceToTribal(game.id))}
+          onShowLastEliminated={showLastEliminatedVoteDebug}
           busy={busy || hasPendingChats}
-          pendingAnswer={pendingTribalAnswer}
-          hiddenMessageIds={hiddenTribalMessageIds}
-          revealingMessages={revealingTribalMessages}
-          displayRound={tribalDisplayRound}
         />
-      ) : (
-        <ChatPanel
+        <Roster
           game={game}
-          selectedAi={selectedAi}
-          debugContext={selectedDebugContext}
-          busy={busy}
-          pendingChats={pendingChats}
-          onSend={(message) => selectedAi && sendOptimisticChat(selectedAi.id, message)}
+          selectedId={showTribalPanel ? null : (selectedAi?.id ?? null)}
+          onSelect={(id) => {
+            setRevealedRoundInChat(null);
+            setSelectedAiId(id);
+          }}
         />
-      )}
-      {game.status === "complete" ? (
-        <div className="result">
-          <strong>Game complete</strong>
-          <span>{outlastedSummary}</span>
-        </div>
-      ) : null}
-      {error ? <div className="toast">{error}</div> : null}
-    </main>
+        {showTribalPanel ? (
+          <TribalChatPanel
+            game={game}
+            selectedVote={selectedVote}
+            onSelectVote={setSelectedVote}
+            onAnswer={sendOptimisticTribalAnswer}
+            onVote={() => runServerAction(game.id, () => castVote(game.id, { targetId: selectedVote }))}
+            onReveal={revealVotesInChat}
+            busy={busy || hasPendingChats}
+            pendingAnswer={pendingTribalAnswer}
+            hiddenMessageIds={hiddenTribalMessageIds}
+            revealingMessages={revealingTribalMessages}
+            displayRound={tribalDisplayRound}
+          />
+        ) : (
+          <ChatPanel
+            game={game}
+            selectedAi={selectedAi}
+            debugContext={selectedDebugContext}
+            busy={busy}
+            pendingChats={pendingChats}
+            onSend={(message) => selectedAi && sendOptimisticChat(selectedAi.id, message)}
+          />
+        )}
+        {game.status === "complete" ? (
+          <div className="result">
+            <strong>Game complete</strong>
+            <span>{outlastedSummary}</span>
+          </div>
+        ) : null}
+        {error ? <div className="toast">{error}</div> : null}
+      </main>
+      {voteDebugModal ? <VoteDebugModal state={voteDebugModal} onClose={() => setVoteDebugModal(null)} /> : null}
+    </>
   );
 };
