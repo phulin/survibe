@@ -545,7 +545,7 @@ Do not message yourself, eliminated contestants, or anyone outside the eligible 
       text: responseTextFormat("survibe_private_turn", "A private-chat response and optional private messages to other contestants.", privateTurnSchema),
       max_output_tokens: 420,
       prompt_cache_key: promptCacheKey(game.id, ai.id),
-      prompt_cache_retention: "in_memory",
+      prompt_cache_retention: "24h",
     }),
   });
 
@@ -606,7 +606,7 @@ This is public and every remaining contestant will hear it. Return a tribal_answ
       text: responseTextFormat("survibe_tribal_answer", "A public Tribal Council answer from one contestant.", tribalAnswerSchema),
       max_output_tokens: 180,
       prompt_cache_key: promptCacheKey(game.id, ai.id),
-      prompt_cache_retention: "in_memory",
+      prompt_cache_retention: "24h",
     }),
   });
 
@@ -645,7 +645,7 @@ Use previous Tribal Council answers and revealed vote history when relevant. Ret
       text: responseTextFormat("survibe_tribal_question", "A single public Tribal Council question from the host.", tribalQuestionSchema),
       max_output_tokens: 120,
       prompt_cache_key: promptCacheKey(game.id, host.id),
-      prompt_cache_retention: "in_memory",
+      prompt_cache_retention: "24h",
     }),
   });
 
@@ -687,7 +687,7 @@ Return a vote JSON object with targetName, rationale, and confidence.`,
       text: responseTextFormat("survibe_vote", "A private vote decision from one contestant.", voteSchema),
       max_output_tokens: 140,
       prompt_cache_key: promptCacheKey(game.id, ai.id),
-      prompt_cache_retention: "in_memory",
+      prompt_cache_retention: "24h",
     }),
   });
 
