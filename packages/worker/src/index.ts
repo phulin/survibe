@@ -140,11 +140,6 @@ const humanVisibleGame = (game: GameView): GameView => ({
 
 const jsonGame = (game: GameView | null, init?: ResponseInit) => (game ? json(humanVisibleGame(game), init) : notFound());
 
-const chooseAiTarget = (voterId: string, candidates: string[], round: number) => {
-  const seed = [...voterId].reduce((sum, char) => sum + char.charCodeAt(0), round);
-  return candidates[seed % candidates.length];
-};
-
 const hostPlayer = (game: GameView) => game.players.find((player) => player.kind === "host") ?? null;
 
 const currentTribalQuestion = (game: GameView) => {
@@ -238,34 +233,17 @@ const castAiVotes = async (env: Env, gameId: string) => {
     }
 
     const candidates = contestants.filter((player) => player.id !== ai.id);
-    const fallbackTargetId = chooseAiTarget(
-      ai.id,
-      candidates.map((player) => player.id),
-      game.round,
-    );
-    let decision = {
-      targetId: fallbackTargetId,
-      rationale: "Best available target.",
-      confidence: 68,
-    };
-
-    try {
-      decision = await generateAiVote(env, game, ai, candidates);
-    } catch {
-      const fallbackTarget = findPlayer(game, fallbackTargetId);
-      decision = {
-        targetId: fallbackTargetId,
-        rationale: fallbackTarget ? `${fallbackTarget.name} is the most practical vote for me tonight.` : "Best available target.",
-        confidence: 60,
-      };
-    }
+    const decision = await generateAiVote(env, game, ai, candidates);
 
     if (decision.targetId === ai.id || !candidates.some((candidate) => candidate.id === decision.targetId)) {
-      decision.targetId = fallbackTargetId;
+      throw new Error("OpenAI vote selected an invalid target.");
     }
 
     const targetId = decision.targetId;
     const target = findPlayer(game, targetId);
+    if (!target) {
+      throw new Error("OpenAI vote selected an unknown target.");
+    }
 
     await addVote(
       env.DB,
@@ -273,7 +251,7 @@ const castAiVotes = async (env: Env, gameId: string) => {
       game.round,
       ai.id,
       targetId,
-      decision.rationale || (target ? `${target.name} looks like the cleanest way through this vote.` : "Best available target."),
+      decision.rationale,
       decision.confidence,
     );
   }
@@ -296,6 +274,11 @@ type AgentTurnJob = {
 type ClaimedAgentTurnJob = {
   job: AgentTurnJob;
   queueKey: string;
+};
+
+type JobFailureResult = {
+  retryDelayMs: number;
+  terminal: boolean;
 };
 
 type PrivateChatBody = {
@@ -410,9 +393,12 @@ export class GameCoordinator {
         await this.processAgentTurn(claimed.job);
         await this.markJobProcessed(claimed.job.id);
       } catch (error) {
-        const retryDelayMs = await this.handleJobFailure(claimed.job, claimed.queueKey, error);
-        if (retryDelayMs) {
-          await this.state.storage.setAlarm(Date.now() + retryDelayMs);
+        const failure = await this.handleJobFailure(claimed.job, claimed.queueKey, error);
+        if (failure.retryDelayMs) {
+          await this.state.storage.setAlarm(Date.now() + failure.retryDelayMs);
+        }
+        if (failure.terminal && claimed.job.priority === "user") {
+          throw error;
         }
         processed += 1;
         continue;
@@ -456,7 +442,7 @@ export class GameCoordinator {
     }
   }
 
-  private async handleJobFailure(job: AgentTurnJob, queueKey: string, error: unknown) {
+  private async handleJobFailure(job: AgentTurnJob, queueKey: string, error: unknown): Promise<JobFailureResult> {
     const failedJob = {
       ...job,
       attempts: job.attempts + 1,
@@ -465,11 +451,17 @@ export class GameCoordinator {
 
     if (failedJob.attempts >= maxAgentTurnAttempts) {
       await this.markJobFailed(failedJob);
-      return 0;
+      return {
+        retryDelayMs: 0,
+        terminal: true,
+      };
     }
 
     await this.requeueJob(failedJob, queueKey);
-    return Math.min(60_000, 5_000 * 2 ** (failedJob.attempts - 1));
+    return {
+      retryDelayMs: Math.min(60_000, 5_000 * 2 ** (failedJob.attempts - 1)),
+      terminal: false,
+    };
   }
 
   private async processAgentTurn(job: AgentTurnJob) {
@@ -502,15 +494,7 @@ export class GameCoordinator {
       (player) => player.id !== ai.id && player.id !== sender.id && player.status === "active",
     );
 
-    let turn;
-    try {
-      turn = await generateAiPrivateTurn(this.env, game, ai, sender, incoming.content, incoming.id, messageCandidates);
-    } catch {
-      turn = {
-        reply: "I hear you. I need to compare that with what everyone else is saying before I lock anything in.",
-        toolCalls: [],
-      };
-    }
+    const turn = await generateAiPrivateTurn(this.env, game, ai, sender, incoming.id, messageCandidates);
 
     const reply = turn.reply?.trim() ?? "";
     const replyMessage = reply ? await addMessage(this.env.DB, game.id, game.round, "private", ai.id, sender.id, reply) : null;
@@ -615,13 +599,7 @@ const addAiTribalAnswers = async (env: Env, gameId: string, question: string) =>
       continue;
     }
 
-    let answer = "Tonight, I am weighing what people have said against what actually protects my game.";
-    try {
-      answer = await generateAiTribalAnswer(env, game, ai, question);
-    } catch {
-      const profile = ai.profile?.strategicStyle;
-      answer = profile ? `${profile}. Tonight, I need a vote that leaves me with room to keep playing.` : answer;
-    }
+    const answer = await generateAiTribalAnswer(env, game, ai, question);
     await addMessage(env.DB, game.id, game.round, "tribal", ai.id, null, answer);
     game = await getGame(env.DB, gameId);
 
@@ -713,7 +691,7 @@ export default {
         const id = env.GAME_COORDINATOR.idFromName(chatMatch.gameId);
         const gameCoordinator = env.GAME_COORDINATOR.get(id);
 
-        return gameCoordinator.fetch(
+        return await gameCoordinator.fetch(
           new Request("https://game-coordinator/private-chat", {
             method: "POST",
             headers: {
@@ -739,14 +717,7 @@ export default {
         }
 
         const host = hostPlayer(game);
-        let question = tribalQuestion;
-        if (host) {
-          try {
-            question = await generateJeffTribalQuestion(env, game, host);
-          } catch {
-            question = tribalQuestion;
-          }
-        }
+        const question = host ? await generateJeffTribalQuestion(env, game, host) : tribalQuestion;
 
         await updateGameStatus(env.DB, game.id, "tribal");
         await addEvent(env.DB, game.id, game.round, "tribal_started", {

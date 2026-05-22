@@ -36,50 +36,16 @@ export type AiPrivateTurn = {
   toolCalls: PrivateMessageAction[];
 };
 
-const fallbackReply = (ai: PlayerSummary, humanMessage: string) => {
-  const hook = humanMessage.toLowerCase().includes("vote")
-    ? "Votes are where trust becomes real."
-    : "I am listening, but I am also counting where everyone is standing.";
-
-  return `${hook} For now, I can work with you if the plan keeps both of us off the bottom.`;
-};
-
-const fallbackPrivateTurn = (ai: PlayerSummary, incomingMessage: string): AiPrivateTurn => ({
-  reply: fallbackReply(ai, incomingMessage),
-  toolCalls: [],
-});
-
-const fallbackTribalAnswer = (ai: PlayerSummary) => {
-  const profile = ai.profile;
-  const style = profile?.strategicStyle ?? "I am watching the numbers and the relationships";
-  return `${style}. Tonight is about making sure the vote matches what people have actually shown me, not just what they promised.`;
-};
-
-const fallbackJeffQuestion = (game: GameView) => {
-  const previousElimination = game.events.filter((event) => event.type === "player_eliminated").at(-1);
-  const eliminatedName = previousElimination?.payload.playerName;
-
-  if (typeof eliminatedName === "string" && eliminatedName.trim()) {
-    return `Last Tribal sent ${eliminatedName} out of the game. What did that vote expose about where trust really sits tonight?`;
+const requireOpenAiApiKey = (env: OpenAiEnv) => {
+  if (!env.OPENAI_API_KEY || env.OPENAI_API_KEY === "replace-with-local-development-key") {
+    throw new Error("OpenAI API key is not configured.");
   }
 
-  return "The social game is over for tonight. The vote is about trust, threat level, and who can survive one more round.";
+  return env.OPENAI_API_KEY;
 };
 
-const fallbackVoteDecision = (ai: PlayerSummary, candidates: PlayerSummary[]): VoteDecision => {
-  const target =
-    [...candidates].sort(
-      (a, b) =>
-        (b.profile?.threatSensitivity ?? 50) - (a.profile?.threatSensitivity ?? 50) ||
-        (b.profile?.deception ?? 50) - (a.profile?.deception ?? 50) ||
-        a.name.localeCompare(b.name),
-    )[0] ?? candidates[0];
-
-  return {
-    targetId: target.id,
-    rationale: `${target.name} is the most dangerous option for my game right now.`,
-    confidence: 68,
-  };
+const invalidOpenAiOutput = (purpose: string): never => {
+  throw new Error(`OpenAI response did not include a valid ${purpose}.`);
 };
 
 const strictObjectSchema = (properties: Record<string, JsonSchema>, required = Object.keys(properties)): JsonSchema => ({
@@ -546,15 +512,10 @@ export const generateAiPrivateTurn = async (
   game: GameView,
   ai: PlayerSummary,
   sender: PlayerSummary,
-  incomingMessage: string,
   incomingMessageId: string | null,
   messageCandidates: PlayerSummary[],
 ): Promise<AiPrivateTurn> => {
-  const apiKey = env.OPENAI_API_KEY;
-
-  if (!apiKey || apiKey === "replace-with-local-development-key") {
-    return fallbackPrivateTurn(ai, incomingMessage);
-  }
+  const apiKey = requireOpenAiApiKey(env);
 
   const candidateNames = messageCandidates.map((candidate) => candidate.name).join(", ") || "none";
   const currentMessage =
@@ -579,7 +540,7 @@ Do not message yourself, eliminated contestants, or anyone outside the eligible 
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: env.OPENAI_MODEL ?? "gpt-5.4-mini",
+      model: env.OPENAI_MODEL ?? "gpt-5.5",
       input,
       text: responseTextFormat("survibe_private_turn", "A private-chat response and optional private messages to other contestants.", privateTurnSchema),
       max_output_tokens: 420,
@@ -613,7 +574,7 @@ Do not message yourself, eliminated contestants, or anyone outside the eligible 
       };
     }
 
-    return fallbackPrivateTurn(ai, incomingMessage);
+    return invalidOpenAiOutput("private turn");
   }
 
   return {
@@ -623,11 +584,7 @@ Do not message yourself, eliminated contestants, or anyone outside the eligible 
 };
 
 export const generateAiTribalAnswer = async (env: OpenAiEnv, game: GameView, ai: PlayerSummary, question: string) => {
-  const apiKey = env.OPENAI_API_KEY;
-
-  if (!apiKey || apiKey === "replace-with-local-development-key") {
-    return fallbackTribalAnswer(ai);
-  }
+  const apiKey = requireOpenAiApiKey(env);
 
   const input = buildInput(
     game,
@@ -644,7 +601,7 @@ This is public and every remaining contestant will hear it. Return a tribal_answ
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: env.OPENAI_MODEL ?? "gpt-5.4-mini",
+      model: env.OPENAI_MODEL ?? "gpt-5.5",
       input,
       text: responseTextFormat("survibe_tribal_answer", "A public Tribal Council answer from one contestant.", tribalAnswerSchema),
       max_output_tokens: 180,
@@ -663,15 +620,11 @@ This is public and every remaining contestant will hear it. Return a tribal_answ
   const parsed = text ? extractJsonObject(text) : null;
   const answer = typeof parsed?.answer === "string" && parsed.answer.trim() ? parsed.answer.trim() : null;
 
-  return answer ?? text ?? fallbackTribalAnswer(ai);
+  return answer ?? invalidOpenAiOutput("Tribal Council answer");
 };
 
 export const generateJeffTribalQuestion = async (env: OpenAiEnv, game: GameView, host: PlayerSummary) => {
-  const apiKey = env.OPENAI_API_KEY;
-
-  if (!apiKey || apiKey === "replace-with-local-development-key") {
-    return fallbackJeffQuestion(game);
-  }
+  const apiKey = requireOpenAiApiKey(env);
 
   const input = buildHostInput(
     game,
@@ -687,7 +640,7 @@ Use previous Tribal Council answers and revealed vote history when relevant. Ret
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: env.OPENAI_MODEL ?? "gpt-5.4-mini",
+      model: env.OPENAI_MODEL ?? "gpt-5.5",
       input,
       text: responseTextFormat("survibe_tribal_question", "A single public Tribal Council question from the host.", tribalQuestionSchema),
       max_output_tokens: 120,
@@ -706,15 +659,11 @@ Use previous Tribal Council answers and revealed vote history when relevant. Ret
   const parsed = text ? extractJsonObject(text) : null;
   const question = typeof parsed?.question === "string" && parsed.question.trim() ? parsed.question.trim() : null;
 
-  return question ?? text ?? fallbackJeffQuestion(game);
+  return question ?? invalidOpenAiOutput("Tribal Council question");
 };
 
 export const generateAiVote = async (env: OpenAiEnv, game: GameView, ai: PlayerSummary, candidates: PlayerSummary[]): Promise<VoteDecision> => {
-  const apiKey = env.OPENAI_API_KEY;
-
-  if (!apiKey || apiKey === "replace-with-local-development-key") {
-    return fallbackVoteDecision(ai, candidates);
-  }
+  const apiKey = requireOpenAiApiKey(env);
 
   const candidateNames = candidates.map((candidate) => candidate.name).join(", ");
   const input = buildInput(
@@ -733,7 +682,7 @@ Return a vote JSON object with targetName, rationale, and confidence.`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: env.OPENAI_MODEL ?? "gpt-5.4-mini",
+      model: env.OPENAI_MODEL ?? "gpt-5.5",
       input,
       text: responseTextFormat("survibe_vote", "A private vote decision from one contestant.", voteSchema),
       max_output_tokens: 140,
@@ -753,16 +702,22 @@ Return a vote JSON object with targetName, rationale, and confidence.`,
   const target = candidates.find((candidate) => candidate.name.toLowerCase() === targetName);
 
   if (!target) {
-    return fallbackVoteDecision(ai, candidates);
+    return invalidOpenAiOutput("vote target");
   }
 
   const confidenceValue = typeof parsed?.confidence === "number" ? parsed.confidence : Number(parsed?.confidence);
-  const confidence = Number.isFinite(confidenceValue) ? Math.max(0, Math.min(100, Math.round(confidenceValue))) : 68;
-  const rationale = typeof parsed?.rationale === "string" && parsed.rationale.trim() ? parsed.rationale.trim() : `${target.name} is best for my game.`;
+  if (!Number.isFinite(confidenceValue)) {
+    return invalidOpenAiOutput("vote confidence");
+  }
+
+  const rationale = typeof parsed?.rationale === "string" && parsed.rationale.trim() ? parsed.rationale.trim() : null;
+  if (!rationale) {
+    return invalidOpenAiOutput("vote rationale");
+  }
 
   return {
     targetId: target.id,
     rationale,
-    confidence,
+    confidence: Math.max(0, Math.min(100, Math.round(confidenceValue))),
   };
 };

@@ -27,7 +27,7 @@ new_sqlite_classes = ["GameCoordinator"]
 
 [vars]
 APP_ENV = "development"
-OPENAI_MODEL = "gpt-5.4-mini"
+OPENAI_MODEL = "gpt-5.5"
 
 [secrets]
 required = ["OPENAI_API_KEY"]
